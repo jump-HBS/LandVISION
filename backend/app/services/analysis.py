@@ -133,8 +133,10 @@ def _insert_patches(db, project_id: int, records: list) -> list:
     return ids
 
 
-def list_patches(db=None, project_id: Optional[int] = None) -> dict:
-    """查询变化图斑（持久化数据，GeoJSON）。"""
+def list_patches(db=None, project_id: Optional[int] = None,
+                 scope: Optional[dict] = None) -> dict:
+    """查询变化图斑（持久化数据，GeoJSON）。v3.0：可选范围过滤（严格范围聚合）。"""
+    scope_g = _scope_geom(scope)
     if is_demo():
         feats = [
             {"type": "Feature", "geometry": p["geometry"], "properties": {
@@ -143,16 +145,21 @@ def list_patches(db=None, project_id: Optional[int] = None) -> dict:
                 "area_sqm": p["area_sqm"], "change_type": p["change_type"],
                 "is_conflict": p.get("is_conflict")}}
             for p in demo_data.LAND_CHANGE_PATCHES
-            if project_id is None or p.get("project_id") == project_id
+            if (project_id is None or p.get("project_id") == project_id)
+            and (scope_g is None or shape(p["geometry"]).intersects(scope_g))
         ]
         return {"type": "FeatureCollection", "features": feats,
                 "count": len(feats)}
     from geoalchemy2.shape import to_shape
+    from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects
     from shapely.geometry import mapping
     from ..models import LandChangePatch
     q = db.query(LandChangePatch)
     if project_id:
         q = q.filter(LandChangePatch.project_id == project_id)
+    if scope:
+        q = q.filter(ST_Intersects(LandChangePatch.geom,
+                                   ST_GeomFromGeoJSON(json.dumps(scope))))
     rows = q.order_by(LandChangePatch.id).all()
     feats = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)), "properties": {
@@ -175,8 +182,10 @@ def _clear_grids(db, project_id: int):
     db.commit()
 
 
-def list_grids(db=None, project_id: Optional[int] = None) -> dict:
-    """查询适宜性评价格网（持久化数据，GeoJSON）。"""
+def list_grids(db=None, project_id: Optional[int] = None,
+               scope: Optional[dict] = None) -> dict:
+    """查询适宜性评价格网（持久化数据，GeoJSON）。v3.0：可选范围过滤（严格范围聚合）。"""
+    scope_g = _scope_geom(scope)
     if is_demo():
         feats = [
             {"type": "Feature", "geometry": g["geometry"], "properties": {
@@ -184,15 +193,20 @@ def list_grids(db=None, project_id: Optional[int] = None) -> dict:
                 "score": g["score"], "level": g["level"],
                 "factors": g.get("factors_json")}}
             for g in demo_data.SUITABILITY_GRIDS
-            if project_id is None or g.get("project_id") == project_id
+            if (project_id is None or g.get("project_id") == project_id)
+            and (scope_g is None or shape(g["geometry"]).intersects(scope_g))
         ]
         return {"type": "FeatureCollection", "features": feats, "count": len(feats)}
     from geoalchemy2.shape import to_shape
+    from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects
     from shapely.geometry import mapping
     from ..models import SuitabilityGrid
     q = db.query(SuitabilityGrid)
     if project_id:
         q = q.filter(SuitabilityGrid.project_id == project_id)
+    if scope:
+        q = q.filter(ST_Intersects(SuitabilityGrid.geom,
+                                   ST_GeomFromGeoJSON(json.dumps(scope))))
     rows = q.order_by(SuitabilityGrid.id).all()
     feats = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)), "properties": {

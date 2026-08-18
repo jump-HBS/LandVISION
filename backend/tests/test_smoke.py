@@ -611,3 +611,69 @@ def test_period_lock_batch_and_mapfeatures():
     assert resp.json()["locked"][0]["id"] == fid
     client.post(f"/api/map-features/{fid}/lock", json={"locked": False})
     client.delete(f"/api/map-features/{fid}")
+
+
+def test_dashboard_scope_strict():
+    """v3.0 P0：驾驶舱严格范围聚合 —— 子范围外的持久化结果不得泄漏进各模块统计。"""
+    project_scope = {"type": "Polygon", "coordinates": [[
+        [113.8, 30.1], [114.5, 30.1], [114.5, 30.6], [113.8, 30.6], [113.8, 30.1]]]}
+    project = client.post("/api/projects", json={
+        "name": "严格范围项目", "base_year": 2020, "current_year": 2026,
+        "scope": project_scope}).json()
+    pid = project["id"]
+
+    # 各模块在项目范围内产出持久化结果
+    gen = client.post("/api/analysis/transition/generate-demo-base",
+                      json={"project_id": pid}).json()
+    assert gen["created"] > 0
+    matrix = client.post("/api/analysis/transition/matrix",
+                         json={"project_id": pid}).json()
+    assert len(matrix["changes_geojson"]["features"]) > 0
+    client.post("/api/analysis/suitability/evaluate", json={
+        "target": "建设用地适宜性", "weights": {}, "scope": project_scope, "project_id": pid})
+    client.post("/api/analysis/accessibility/analyze", json={
+        "facility_types": [], "radius_m": 800, "project_id": pid})
+    client.post("/api/planning/review", json={"project_id": pid})
+
+    full = client.post("/api/dashboard/summary", json={"project_id": pid}).json()
+    assert full["progress"]["transition"] is True
+    assert full["suitability"]["cell_total"] > 0
+    assert full["planning_review"]["review_rows"], full["planning_review"]
+    assert full["overview"]["parcel_total"] > 0
+
+    # 项目内的空子范围（远离演示区）→ 全部数据源收敛为 0
+    far_scope = {"type": "Polygon", "coordinates": [[
+        [113.85, 30.15], [113.9, 30.15], [113.9, 30.2], [113.85, 30.2], [113.85, 30.15]]]}
+    sub = client.post("/api/dashboard/summary",
+                      json={"project_id": pid, "scope": far_scope, "scope_label": "空子范围"}).json()
+    assert sub["scope"]["has_scope"] is True
+    assert sub["scope"]["strict"] is True  # v3.0 严格聚合徽标
+    assert sub["overview"]["parcel_total"] == 0, sub["overview"]
+    assert sub["overview"]["area_total_sqm"] == 0
+    assert sub["overview"]["poi_total"] == 0
+    assert sub["overview"]["planning_zone_total"] == 0
+    assert sub["transition_analysis"]["change_count"] == 0, sub["transition_analysis"]
+    # 适宜性格网在整个项目范围内都有生成，子范围内只统计范围内的格网（不得等于全量）
+    assert 0 < sub["suitability"]["cell_total"] < full["suitability"]["cell_total"], \
+        sub["suitability"]
+    assert sub["planning_review"]["review_parcel_count"] == 0
+    assert sub["planning_review"]["review_zone_count"] == 0
+    assert sub["accessibility"]["parcel_total"] == 0
+    assert sub["accessibility"]["gap_count"] == 0
+    assert all(i["count"] == 0 for i in sub["land_use_distribution"])
+
+    # 部分重叠子范围：只统计范围内地块，跨界面积裁剪后小于全量
+    part_scope = {"type": "Polygon", "coordinates": [[
+        [114.30, 30.49], [114.335, 30.49], [114.335, 30.512], [114.30, 30.512], [114.30, 30.49]]]}
+    part = client.post("/api/dashboard/summary",
+                       json={"project_id": pid, "scope": part_scope, "scope_label": "部分范围"}).json()
+    assert 0 < part["overview"]["parcel_total"] < full["overview"]["parcel_total"], part["overview"]
+    assert 0 < part["overview"]["area_total_sqm"] < full["overview"]["area_total_sqm"]
+    # 报告中同样严格（与驾驶舱共用数据源）
+    rp = client.post("/api/report/generate", json={
+        "project_name": "范围报告", "period": "Q", "author": "t",
+        "project_id": pid, "scope": far_scope, "scope_label": "空子范围"}).json()
+    assert rp["overview"]["parcel_total"] == 0
+    assert rp["scope"]["strict"] is True
+
+    client.delete(f"/api/projects/{pid}")

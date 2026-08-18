@@ -11,6 +11,9 @@
               <el-tag v-if="summary.project?.name" size="small" type="success" effect="plain" style="margin-left:8px">
                 范围：{{ summary.scope.label }}
               </el-tag>
+              <el-tag v-if="summary.scope?.strict" size="small" type="warning" effect="plain" style="margin-left:6px">
+                已按此范围聚合
+              </el-tag>
             </div>
             <div class="project-meta">
               <template v-if="summary.project?.name">

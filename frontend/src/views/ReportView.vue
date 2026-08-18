@@ -52,7 +52,12 @@
 
           <el-divider content-position="left">一、项目概况</el-divider>
           <el-descriptions :column="3" border size="small">
-            <el-descriptions-item label="分析范围">{{ report.scope.label }}</el-descriptions-item>
+            <el-descriptions-item label="分析范围">
+              {{ report.scope.label }}
+              <el-tag v-if="report.scope?.strict" size="small" type="warning" effect="plain" style="margin-left:4px">
+                已按此范围聚合
+              </el-tag>
+            </el-descriptions-item>
             <el-descriptions-item label="地块总数">{{ report.overview.parcel_total }} 宗</el-descriptions-item>
             <el-descriptions-item label="总面积">{{ (report.overview.area_total_sqm / 10000).toFixed(2) }} 公顷</el-descriptions-item>
             <el-descriptions-item label="兴趣点">{{ report.overview.poi_total }} 个</el-descriptions-item>
