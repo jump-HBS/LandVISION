@@ -7,7 +7,8 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 
 from ..config import settings
 from ..database import get_db
-from ..schemas import BatchIdsBody, LockBody, ParcelCreate, ParcelUpdate
+from ..schemas import (BatchIdsBody, GeometryDelete, LockBody, ParcelCreate,
+                       ParcelUpdate)
 from ..services import shp_import, spatial
 
 router = APIRouter(prefix="/parcels", tags=["地块管理"])
@@ -83,6 +84,16 @@ def delete_parcel(parcel_id: int, db=Depends(get_db)):
 @router.post("/batch-delete", summary="批量删除地块（跳过锁定项）")
 def batch_delete_parcels(body: BatchIdsBody, db=Depends(get_db)):
     return spatial.batch_delete_parcels(body.ids, db)
+
+
+@router.post("/delete-by-geometry", summary="v3.0：按几何范围批量删除地块（地图框选，跳过锁定项）")
+def delete_by_geometry(body: GeometryDelete, db=Depends(get_db)):
+    if body.mode not in ("intersects", "within"):
+        raise HTTPException(status_code=422, detail="mode 必须为 intersects 或 within")
+    try:
+        return spatial.delete_parcels_by_geometry(body.geometry, body.mode, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.post("/{parcel_id}/lock", summary="锁定 / 解锁地块（锁定后不可删除）")

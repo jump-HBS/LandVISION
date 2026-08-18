@@ -10,12 +10,15 @@
       :highlight-id="highlightId"
       :batch-select="batchMode"
       :show-save-drawing="true"
+      :enable-selection="boxDeleteMode"
+      :selection-delete="true"
       @parcel-click="onMapClick"
       @parcel-detail="onParcelDetail"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
       @batch-selection="onBatchSelection"
       @save-drawing="onSaveDrawing"
+      @selection-delete="onSelectionDelete"
     />
 
     <!-- 左侧：图标按钮 -->
@@ -37,6 +40,10 @@
     <button class="page-icon-btn icon-left5" :class="{ active: panelOpen === 'pois' }"
             title="兴趣点管理（点要素 SHP 导入/删除）" @click="togglePanel('pois')">
       <el-icon :size="18"><Place /></el-icon>
+    </button>
+    <button class="page-icon-btn icon-left6" :class="{ active: boxDeleteMode }"
+            title="框选删除（地图框选/圈选地块后批量删除，跳过锁定项）" @click="toggleBoxDeleteMode">
+      <el-icon :size="18"><Delete /></el-icon>
     </button>
 
     <!-- 左侧展开：地块列表面板 -->
@@ -362,7 +369,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
-  createParcel, deleteParcel, lockParcel, batchDeleteParcels, batchDeletePois, batchDeleteZones,
+  createParcel, deleteParcel, lockParcel, batchDeleteParcels, deleteParcelsByGeometry,
+  batchDeletePois, batchDeleteZones,
   importParcelsShp, importPoisShp, getPois, deletePoi,
   checkParcel, getRegion, getProjects,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
@@ -406,6 +414,9 @@ const projectName = computed(() => {
 // 批量选择（地图点击进入选中集）
 const batchMode = ref(false)
 const batchSelection = ref({ parcel_ids: [], poi_ids: [], zone_ids: [] })
+
+// v3.0：框选删除（地图框选/圈选后删除范围内地块，跳过锁定项）
+const boxDeleteMode = ref(false)
 
 // 地图标注
 const mapFeatures = ref([])
@@ -680,6 +691,35 @@ async function lockSelectedOnMap() {
   await loadPage(1)
 }
 
+// ---------- v3.0 框选删除（地图框选/圈选范围 → 删除范围内地块） ----------
+function toggleBoxDeleteMode() {
+  boxDeleteMode.value = !boxDeleteMode.value
+  if (!boxDeleteMode.value) mapRef.value?.clearSelection()
+  ElMessage.info(boxDeleteMode.value
+    ? '框选删除模式：使用地图工具（框选/圈选/多边形）划定范围，删除范围内地块（锁定项跳过）'
+    : '已退出框选删除模式')
+}
+
+async function onSelectionDelete(selection) {
+  if (!selection?.count) { ElMessage.warning('所选范围内没有地块'); return }
+  await ElMessageBox.confirm(
+    `确定删除框选范围内的 ${selection.count} 宗地块吗？（锁定地块自动跳过，此操作不可恢复）`,
+    '框选删除确认',
+    { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
+  try {
+    const result = await deleteParcelsByGeometry({ geometry: selection.geometry, mode: 'intersects' })
+    if (result.locked.length) {
+      ElMessage.warning(`${result.locked.length} 宗地块已锁定，已跳过（虚线描边标识）`)
+    }
+    ElMessage.success(`已删除 ${result.deleted.length} 宗地块`)
+    mapRef.value?.clearSelection()
+    await Promise.all([loadPage(1), store.fetchParcelsGeojson(period.value || undefined)])
+  } catch (e) {
+    ElMessage.error('框选删除失败：' + (e?.message || '未知原因'))
+  }
+}
+
 // ---------- 地图标注（绘制持久化） ----------
 async function loadMapFeatures() {
   featuresLoading.value = true
@@ -933,6 +973,11 @@ async function onDeletePoi(row) {
   left: 10px;
   top: 50%;
   transform: translateY(calc(-50% + 107px));
+}
+.icon-left6 {
+  left: 10px;
+  top: 50%;
+  transform: translateY(calc(-50% + 150px));
 }
 .page-panel {
   position: absolute;

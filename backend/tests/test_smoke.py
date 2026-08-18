@@ -677,3 +677,42 @@ def test_dashboard_scope_strict():
     assert rp["scope"]["strict"] is True
 
     client.delete(f"/api/projects/{pid}")
+
+
+def test_delete_by_geometry():
+    """v3.0：按几何范围批量删除地块（地图框选删除，锁定项跳过）。"""
+    # 范围完全落在 A-01（id=1，114.3272-114.3347 / 30.504-30.51）内部，
+    # 且避开其它导入地块（x<114.33）
+    box = {"type": "Polygon", "coordinates": [[
+        [114.3285, 30.5055], [114.3295, 30.5055], [114.3295, 30.5085],
+        [114.3285, 30.5085], [114.3285, 30.5055]]]}
+
+    # 非法 mode → 422
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "overlap"})
+    assert resp.status_code == 422
+
+    # 锁定地块 1 → 框选删除被跳过
+    client.post("/api/parcels/1/lock", json={"locked": True})
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "intersects"})
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["deleted"] == [], result
+    assert any(l["id"] == 1 for l in result["locked"]), result
+    assert client.get("/api/parcels/1").status_code == 200  # 未删除
+
+    # 解锁后删除成功
+    client.post("/api/parcels/1/lock", json={"locked": False})
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "intersects"})
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["deleted"] == [1], result
+    assert client.get("/api/parcels/1").status_code == 404
+
+    # within 模式：框不完全包含地块 → 不删除（剩余地块均大于该框）
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "within"})
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == []

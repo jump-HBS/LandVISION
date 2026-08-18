@@ -13,6 +13,8 @@ export const updateParcel = (id, data) => request.put(`/parcels/${id}`, data)
 export const deleteParcel = (id) => request.delete(`/parcels/${id}`)
 export const lockParcel = (id, locked) => request.post(`/parcels/${id}/lock`, { locked })
 export const batchDeleteParcels = (ids) => request.post('/parcels/batch-delete', { ids })
+// v3.0：按几何范围批量删除（地图框选删除，跳过锁定项）
+export const deleteParcelsByGeometry = (data) => request.post('/parcels/delete-by-geometry', data)
 export const batchSetParcelPeriod = (period, ids) =>
   request.post('/parcels/batch-set-period', null, { params: { period, ids: ids?.join(',') } })
 // SHP 批量导入（multipart：file + period + project_id + 字段）
