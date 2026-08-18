@@ -716,3 +716,13 @@ def test_delete_by_geometry():
                        json={"geometry": box, "mode": "within"})
     assert resp.status_code == 200
     assert resp.json()["deleted"] == []
+
+
+def test_suitability_conflicts_endpoint():
+    """v3.0：适宜性矛盾提示端点（无体检冲突时返回空清单，不报错）。"""
+    resp = client.get("/api/analysis/suitability/conflicts",
+                      params={"project_id": _ensure_project()})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "conflicts" in data and "hint" in data
+    assert data["conflicts"] == []

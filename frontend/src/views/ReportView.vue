@@ -259,7 +259,8 @@ async function download() {
 
 // 钻取：问题/台账行 → 对应模块/地块
 function problemDrill(problem) {
-  const map = { 三区三线冲突: '/planning', 三区三线警告: '/planning', 设施盲区: '/accessibility', 违规变化: '/planning' }
+  // v3.0：违规变化 → 转移矩阵页（对变化图斑进行合规检查）
+  const map = { 三区三线冲突: '/planning', 三区三线警告: '/planning', 设施盲区: '/accessibility', 违规变化: '/transition' }
   if (map[problem.type]) router.push(map[problem.type])
 }
 
