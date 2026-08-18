@@ -100,6 +100,15 @@
           </el-col>
         </el-row>
 
+        <!-- v3.0 联动：适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突） -->
+        <el-alert v-if="conflictHint" class="mb" type="warning" :closable="false"
+                  :title="conflictHint" />
+        <div v-if="conflictParcels.length" class="mb">
+          <el-tag v-for="c in conflictParcels" :key="c.parcel_id" size="small" type="danger" class="conflict-tag">
+            {{ c.name }}（{{ c.parcel_code }}）
+          </el-tag>
+        </div>
+
         <div class="section-title">适宜等级分布（格网单元数）</div>
         <div ref="levelBarEl" class="chart-md"></div>
 
@@ -141,6 +150,7 @@ import * as echarts from 'echarts'
 import { useUiStore } from '../stores/ui'
 import {
   getRegion, getSuitabilityTargets, suitabilityEvaluate, parseScopeShp,
+  getSuitabilityConflicts,
 } from '../api'
 import MapView from '../components/MapView.vue'
 
@@ -179,6 +189,10 @@ const evaluating = ref(false)
 const result = ref(null)
 const levelBarEl = ref(null)
 let charts = []
+
+// v3.0 联动：适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突地块）
+const conflictHint = ref('')
+const conflictParcels = ref([])
 
 const targetKeys = computed(() => Object.keys(targets.value).length ? Object.keys(targets.value) : ['建设用地适宜性', '耕地适宜性'])
 const factors = computed(() => targets.value[target.value]?.factors || [])
@@ -305,7 +319,9 @@ async function runEvaluate() {
       scope: scopeGeojson.value,
       project_id: ui.currentProjectId || null,
     })
+    ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
     if (!cellTotal.value) ElMessage.warning('范围内未生成格网单元，请检查评价范围')
+    await checkConflicts()
   } catch (e) {
     ElMessage.error('评价失败：' + (e?.message || '未知原因'))
   } finally {
@@ -315,6 +331,20 @@ async function runEvaluate() {
   renderCharts()
   fitToCells()
   setTimeout(() => charts.forEach((c) => c.resize()), 80)
+}
+
+// v3.0 联动：适宜性矛盾提示（高度/中等适宜格网 ∩ 体检冲突地块）
+async function checkConflicts() {
+  conflictHint.value = ''
+  conflictParcels.value = []
+  if (!ui.currentProjectId) return
+  try {
+    const data = await getSuitabilityConflicts({ project_id: ui.currentProjectId })
+    conflictHint.value = data.hint || ''
+    conflictParcels.value = data.conflicts || []
+  } catch (e) {
+    // 体检尚未执行等场景静默跳过
+  }
 }
 
 function renderCharts() {
@@ -487,6 +517,9 @@ function gotoPlanning() {
 }
 .mt {
   margin-top: 12px;
+}
+.conflict-tag {
+  margin: 0 6px 4px 0;
 }
 .chart-md {
   height: 220px;

@@ -155,7 +155,7 @@
             </el-button>
           </div>
           <div class="scope-hint mt">
-            联动说明：合规检查 → 图斑体检（模块四）；适宜性/可达性 → 以「新增」图斑并集范围作为分析对象（需先选择分析项目，结果按项目持久化）。
+            联动说明：合规检查 → 图斑体检（模块四）；适宜性/可达性 → 以「新增」图斑并集范围作为分析对象（需先选择分析项目，结果按项目持久化）；可达性联动会按矩阵结果自动预置设施类型。
           </div>
         </div>
 
@@ -246,6 +246,12 @@ function linkToSuitability() {
 function linkToAccessibility() {
   if (!requireProject() || !addedGeom.value) return
   ui.setLinkedPatches(null, addedGeom.value, '新增建设用地图斑')
+  // v3.0：按矩阵结果预置设施类型 —— 存在新增建设 → 全类型生活圈校验；否则基础两类
+  const hasNewBuild = (changesFc.value.features || []).some(
+    (f) => f.properties.change_type === '新增建设' || f.properties.kind === '新增')
+  const preset = hasNewBuild ? ['交通', '商业', '教育', '医疗', '休闲'] : ['交通', '商业']
+  ui.setLinkedFacilityTypes(preset)
+  ElMessage.success(`已按矩阵结果预置设施类型：${preset.join('、')}`)
   router.push('/accessibility')
 }
 
@@ -460,6 +466,7 @@ async function runMatrix() {
       scope: scopeGeojson.value || null,
       project_id: ui.currentProjectId || null,
     })
+    ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
   } catch (e) {
     ElMessage.error('计算失败：' + (e?.message || '未知原因'))
   } finally {

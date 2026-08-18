@@ -701,3 +701,39 @@ def facility_sites(db, project_id: int) -> dict:
     return {"type": "FeatureCollection", "features": features,
             "count": len(features),
             "gap_parcel_count": len(gap_ids)}
+
+
+# ===========================================================================
+# 模块联动（v3.0）：适宜性「高度/中等适宜」∩ 体检「冲突」→ 矛盾提示
+# ===========================================================================
+
+def suitability_conflicts(db, project_id: int = None,
+                          scope: Optional[dict] = None) -> dict:
+    """适宜性矛盾提示：高度/中等适宜格网覆盖了体检结论为「冲突」的地块。
+
+    返回冲突地块列表与提示文案；供适宜性页在评价完成后自动校验。
+    """
+    if not project_id:
+        return {"conflicts": [], "hint": "未关联分析项目，跳过适宜性矛盾校验（体检结果按项目持久化）"}
+    from .planning_check import list_results as check_results
+    results = check_results(db, project_id=project_id)
+    conflict_ids = {r["parcel_id"] for r in results if r["conclusion"] == "冲突"}
+    if not conflict_ids:
+        return {"conflicts": [], "hint": None}
+    grids_fc = list_grids(db, project_id=project_id, scope=scope)
+    suitable = [shape(g["geometry"]) for g in grids_fc["features"]
+                if g["properties"]["level"] in ("高度适宜", "中等适宜")]
+    if not suitable:
+        return {"conflicts": [], "hint": None}
+    conflicts = []
+    for p in _load_parcels(db, None):
+        if p["id"] not in conflict_ids:
+            continue
+        if any(p["geom"].intersects(s) for s in suitable):
+            conflicts.append({
+                "parcel_id": p["id"], "parcel_code": p["parcel_code"],
+                "name": p["name"], "land_use": p["land_use"],
+            })
+    hint = (f"{len(conflicts)} 宗地块同时出现「适宜建设（高度/中等适宜）」与「三区三线冲突」矛盾，"
+            "建议复核体检结论或调整评价权重后重新评价。") if conflicts else None
+    return {"conflicts": conflicts, "hint": hint}

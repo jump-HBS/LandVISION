@@ -601,6 +601,7 @@ async function runReview() {
       project_id: ui.currentProjectId || null,
     }
     reviewResult.value = await reviewPlanning(lastReviewPayload.value)
+    ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
   } finally {
     reviewing.value = false
   }
@@ -620,6 +621,7 @@ async function runPatchReview() {
       patch_ids: ui.linkedPatches?.length ? ui.linkedPatches : null,
     })
     ui.setLinkedPatches(null, null, null)
+    ui.bumpAnalysisVersion()  // v3.0：图斑体检结论变化 → 驾驶舱自动刷新
   } finally {
     reviewing.value = false
   }

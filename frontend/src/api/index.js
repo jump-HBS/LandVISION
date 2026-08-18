@@ -91,6 +91,8 @@ export const getTransitionPatches = (params) => request.get('/analysis/transitio
 export const getSuitabilityTargets = () => request.get('/analysis/suitability/targets')
 export const suitabilityEvaluate = (data) => request.post('/analysis/suitability/evaluate', data, { timeout: 120000 })
 export const getSuitabilityGrids = (params) => request.get('/analysis/suitability/grids', { params })
+// v3.0：适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突地块）
+export const getSuitabilityConflicts = (params) => request.get('/analysis/suitability/conflicts', { params })
 export const accessibilityAnalyze = (data) => request.post('/analysis/accessibility/analyze', data, { timeout: 120000 })
 export const getAccessibilityResults = (params) => request.get('/analysis/accessibility/results', { params })
 export const getFacilitySites = (params) => request.get('/analysis/facility-sites', { params })
