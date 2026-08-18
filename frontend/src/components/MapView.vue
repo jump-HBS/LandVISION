@@ -74,7 +74,12 @@
         <div v-for="g in legendGroups" :key="g.title" class="legend-group">
           <div class="legend-group-title">{{ g.title }}</div>
           <div v-for="item in g.items" :key="item.label" class="legend-item">
-            <span class="layer-swatch" :style="{ background: item.color }"></span>
+            <!-- v3.0：三区三线图例预览线型（实线/虚线 + 线宽） -->
+            <span v-if="item.line" class="legend-line"
+                  :style="{ borderTopWidth: item.line.width + 'px',
+                            borderTopStyle: item.line.dash?.length ? 'dashed' : 'solid',
+                            borderTopColor: item.color }"></span>
+            <span v-else class="layer-swatch" :style="{ background: item.color }"></span>
             <span>{{ item.label }}</span>
           </div>
         </div>
@@ -1046,6 +1051,14 @@ function watchAll() {
   width: 12px;
   height: 12px;
   border-radius: 3px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+/* v3.0：三区三线图例线型预览（实线/虚线 + 线宽） */
+.legend-line {
+  width: 24px;
+  height: 0;
+  border-top: 2px solid transparent;
   display: inline-block;
   flex-shrink: 0;
 }
