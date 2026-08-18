@@ -7,7 +7,8 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 
 from ..config import settings
 from ..database import get_db
-from ..schemas import BatchIdsBody, LockBody, ParcelCreate, ParcelUpdate
+from ..schemas import (BatchIdsBody, GeometryDelete, LockBody, ParcelCreate,
+                       ParcelUpdate)
 from ..services import shp_import, spatial
 
 router = APIRouter(prefix="/parcels", tags=["地块管理"])
@@ -85,6 +86,16 @@ def batch_delete_parcels(body: BatchIdsBody, db=Depends(get_db)):
     return spatial.batch_delete_parcels(body.ids, db)
 
 
+@router.post("/delete-by-geometry", summary="v3.0：按几何范围批量删除地块（地图框选，跳过锁定项）")
+def delete_by_geometry(body: GeometryDelete, db=Depends(get_db)):
+    if body.mode not in ("intersects", "within"):
+        raise HTTPException(status_code=422, detail="mode 必须为 intersects 或 within")
+    try:
+        return spatial.delete_parcels_by_geometry(body.geometry, body.mode, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.post("/{parcel_id}/lock", summary="锁定 / 解锁地块（锁定后不可删除）")
 def lock_parcel(parcel_id: int, body: LockBody, db=Depends(get_db)):
     data = spatial.set_parcel_locked(parcel_id, body.locked, db)
@@ -126,6 +137,8 @@ async def import_shp(
             region_field=region_field, region_code=region_code,
             period=period, project_id=project_id,
         )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except (shp_import.ShpImportError, ValueError) as exc:
         import logging
         logging.getLogger("landvision.shp_import").warning("地块 SHP 导入被拒绝：%s", exc)

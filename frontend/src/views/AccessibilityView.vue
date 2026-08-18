@@ -33,6 +33,7 @@
         title="以地块几何中心为起点，计算到所选设施（POI）的直线距离；距离 ≤ 服务半径即判定覆盖（达标），否则列入盲区清单。参照《城市居住区规划设计标准》15 分钟生活圈理念，默认半径 800 m。" />
 
       <div class="section-title">② 设施类型（不勾选 = 全部设施）</div>
+      <el-alert v-if="linkedFacilityHint" class="mb" type="success" :closable="false" :title="linkedFacilityHint" />
       <el-checkbox-group v-model="facilityTypes" size="small" class="mb">
         <el-checkbox v-for="t in POI_TYPES" :key="t" :label="t">
           <span class="legend-dot" :style="{ background: POI_COLORS[t] }"></span>{{ t }}
@@ -176,6 +177,8 @@ const currentRegion = ref(null)
 const scopeGeojson = ref(null)
 const scopeFile = ref(null)
 const scopeImporting = ref(false)
+// v3.0 联动：转移矩阵预置的设施类型提示
+const linkedFacilityHint = ref('')
 
 // 结果
 const running = ref(false)
@@ -201,6 +204,13 @@ onMounted(async () => {
     store.fetchParcelsGeojson(),
     loadPois(),
   ])
+  // v3.0 联动：转移矩阵 → 预置设施类型（先于范围继承处理，均消费后清除）
+  if (ui.linkedFacilityTypes?.length) {
+    facilityTypes.value = [...ui.linkedFacilityTypes]
+    linkedFacilityHint.value = `已按转移矩阵结果预置设施类型：${ui.linkedFacilityTypes.join('、')}`
+    ui.setLinkedFacilityTypes([])
+    ElMessage.info(`已接收联动预置设施类型：${facilityTypes.value.join('、')}`)
+  }
   // v2.0 范围统一继承：转移矩阵联动范围 ＞ 当前项目范围
   if (ui.linkedScope) {
     scopeGeojson.value = ui.linkedScope
@@ -294,6 +304,7 @@ async function runAnalyze() {
       scope: scopeGeojson.value || null,
       project_id: ui.currentProjectId || null,
     })
+    ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
   } catch (e) {
     ElMessage.error('分析失败：' + (e?.message || '未知原因'))
   } finally {

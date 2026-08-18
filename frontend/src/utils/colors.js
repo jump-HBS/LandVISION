@@ -87,4 +87,9 @@ export const CHANGE_LEGEND = Object.entries(CHANGE_COLORS).map(([label, color]) 
 export const ZONE_LEGEND = ZONE_TYPE_ORDER.map((code) => ({
   label: ZONE_TYPE_LABELS[code],
   color: ZONE_TYPE_COLORS[code],
+  // v3.0：图例中预览线型（线宽 + 虚线样式）
+  line: {
+    width: ZONE_TYPE_LINE_STYLES[code].width,
+    dash: ZONE_TYPE_LINE_STYLES[code].dash,
+  },
 }))

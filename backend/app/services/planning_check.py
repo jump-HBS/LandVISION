@@ -242,8 +242,9 @@ def import_zones_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
                           project_id: Optional[int] = None,
                           period: Optional[str] = None) -> dict:
     """SHP 导入三区三线控制线（边界由用户导入，类型统一指定或按字段容错映射）。"""
-    from .shp_import import _pick_field, parse_shp_zip
+    from .shp_import import _pick_field, parse_shp_zip, require_project
 
+    require_project(db, project_id)
     parsed = parse_shp_zip(zip_bytes)
     fields = parsed["fields"]
     name_f = _pick_field(fields, ["name", "NAME", "XMMC", "MC", "zone_name"], name_field)

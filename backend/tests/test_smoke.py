@@ -56,6 +56,44 @@ def _make_shp_zip(name="test_parcels", encoding="utf-8"):
     return buf.getvalue()
 
 
+def _make_point_shp_zip(name="test_pois"):
+    """构造点要素 Shapefile zip（POI 导入：2 个点 + 名称/类型字段）。"""
+    shp = io.BytesIO()
+    shx = io.BytesIO()
+    dbf = io.BytesIO()
+    w = shapefile.Writer(shp=shp, shx=shx, dbf=dbf, encoding="utf-8")
+    w.field("NAME", "C", 50)
+    w.field("TYPE", "C", 50)
+    w.point(114.339, 30.5045)
+    w.record("测试地铁站", "交通")
+    w.point(114.346, 30.5035)
+    w.record("测试商场", "商业")
+    w.close()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(f"{name}.shp", shp.getvalue())
+        zf.writestr(f"{name}.shx", shx.getvalue())
+        zf.writestr(f"{name}.dbf", dbf.getvalue())
+        zf.writestr(f"{name}.prj",
+                    'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984"],PRIMEM["Greenwich",0],'
+                    'UNIT["Degree",0.0174532925199433]]')
+    return buf.getvalue()
+
+
+def _ensure_project():
+    """确保存在一个分析项目（v3.0：SHP 导入强制关联项目），返回 project_id。"""
+    existing = client.get("/api/projects").json()
+    if existing:
+        return existing[0]["id"]
+    scope = {"type": "Polygon", "coordinates": [[
+        [114.33, 30.49], [114.36, 30.49], [114.36, 30.51], [114.33, 30.51], [114.33, 30.49]]]}
+    resp = client.post("/api/projects", json={
+        "name": "SHP导入测试项目", "base_year": 2020, "current_year": 2026, "scope": scope})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
 def test_root_and_health():
     resp = client.get("/")
     assert resp.status_code == 200
@@ -160,12 +198,38 @@ def test_parcels_flow():
 
 
 def test_shp_import_parcels():
-    """SHP zip 上传 → 解析 → 地块入库（端到端）。"""
+    """SHP zip 上传 → 解析 → 地块入库（端到端，v3.0 强制关联项目）。"""
+    project_id = _ensure_project()
     zip_bytes = _make_shp_zip()
+
+    # 未关联项目 → 422（v3.0：拒绝写入全局数据池）
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("parcels.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111"},
+    )
+    assert resp.status_code == 422
+
+    # 项目不存在 → 404
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"project_id": 99999},
+    )
+    assert resp.status_code == 404
+
+    # 非法期次 → 422
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"project_id": project_id, "period": "future"},
+    )
+    assert resp.status_code == 422
+
+    # 正常导入（关联项目 + 期次）
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"region_code": "420111", "project_id": project_id, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
@@ -177,6 +241,9 @@ def test_shp_import_parcels():
     # 面积必须按几何自动计算（不能为 0/None）——回归：导入地块面积缺失 Bug
     imported_items = [i for i in items if i["parcel_code"].startswith("IMP-")]
     assert all((i["area_sqm"] or 0) > 1000 for i in imported_items), imported_items
+    # 期次与项目随导入落库
+    assert all(i["period"] == "base" for i in imported_items)
+    assert all(i["project_id"] == project_id for i in imported_items)
 
     # 非 zip → 422
     resp = client.post(
@@ -188,16 +255,64 @@ def test_shp_import_parcels():
 
 def test_shp_import_gbk_encoding():
     """GBK 编码 DBF（天地图数据常见）自动回退解析。"""
+    project_id = _ensure_project()
     zip_bytes = _make_shp_zip(name="gbk_parcels", encoding="gbk")
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("gbk.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111"},
+        data={"region_code": "420111", "project_id": project_id, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
     assert result["imported"] == 2, result
     assert result["encoding"] == "gbk"
+
+
+def test_shp_import_pois():
+    """v3.0：POI 点要素导入（点面分离、项目强制关联、类型容错映射）。"""
+    project_id = _ensure_project()
+    point_zip = _make_point_shp_zip()
+
+    # 面要素 zip 用于 POI 导入 → 全部跳过（点面分离提示）
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("parcels.zip", _make_shp_zip(), "application/zip")},
+        data={"project_id": project_id},
+    )
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["imported"] == 0, result
+    assert any("面要素" in s["reason"] for s in result["skipped"]), result
+
+    # 未关联项目 → 422；项目不存在 → 404
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+        data={"project_id": 99999},
+    )
+    assert resp.status_code == 404
+
+    # 正常点要素导入：名称/类型字段自动识别
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+        data={"project_id": project_id},
+    )
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["imported"] == 2, result
+    assert result["project_id"] == project_id
+
+    pois = client.get("/api/pois", params={"page_size": 100}).json()
+    by_name = {p["name"]: p for p in pois["items"]}
+    assert "测试地铁站" in by_name and "测试商场" in by_name
+    assert by_name["测试地铁站"]["poi_type"] == "交通"
+    assert by_name["测试商场"]["poi_type"] == "商业"
 
 
 def test_shp_import_regions():
@@ -496,3 +611,118 @@ def test_period_lock_batch_and_mapfeatures():
     assert resp.json()["locked"][0]["id"] == fid
     client.post(f"/api/map-features/{fid}/lock", json={"locked": False})
     client.delete(f"/api/map-features/{fid}")
+
+
+def test_dashboard_scope_strict():
+    """v3.0 P0：驾驶舱严格范围聚合 —— 子范围外的持久化结果不得泄漏进各模块统计。"""
+    project_scope = {"type": "Polygon", "coordinates": [[
+        [113.8, 30.1], [114.5, 30.1], [114.5, 30.6], [113.8, 30.6], [113.8, 30.1]]]}
+    project = client.post("/api/projects", json={
+        "name": "严格范围项目", "base_year": 2020, "current_year": 2026,
+        "scope": project_scope}).json()
+    pid = project["id"]
+
+    # 各模块在项目范围内产出持久化结果
+    gen = client.post("/api/analysis/transition/generate-demo-base",
+                      json={"project_id": pid}).json()
+    assert gen["created"] > 0
+    matrix = client.post("/api/analysis/transition/matrix",
+                         json={"project_id": pid}).json()
+    assert len(matrix["changes_geojson"]["features"]) > 0
+    client.post("/api/analysis/suitability/evaluate", json={
+        "target": "建设用地适宜性", "weights": {}, "scope": project_scope, "project_id": pid})
+    client.post("/api/analysis/accessibility/analyze", json={
+        "facility_types": [], "radius_m": 800, "project_id": pid})
+    client.post("/api/planning/review", json={"project_id": pid})
+
+    full = client.post("/api/dashboard/summary", json={"project_id": pid}).json()
+    assert full["progress"]["transition"] is True
+    assert full["suitability"]["cell_total"] > 0
+    assert full["planning_review"]["review_rows"], full["planning_review"]
+    assert full["overview"]["parcel_total"] > 0
+
+    # 项目内的空子范围（远离演示区）→ 全部数据源收敛为 0
+    far_scope = {"type": "Polygon", "coordinates": [[
+        [113.85, 30.15], [113.9, 30.15], [113.9, 30.2], [113.85, 30.2], [113.85, 30.15]]]}
+    sub = client.post("/api/dashboard/summary",
+                      json={"project_id": pid, "scope": far_scope, "scope_label": "空子范围"}).json()
+    assert sub["scope"]["has_scope"] is True
+    assert sub["scope"]["strict"] is True  # v3.0 严格聚合徽标
+    assert sub["overview"]["parcel_total"] == 0, sub["overview"]
+    assert sub["overview"]["area_total_sqm"] == 0
+    assert sub["overview"]["poi_total"] == 0
+    assert sub["overview"]["planning_zone_total"] == 0
+    assert sub["transition_analysis"]["change_count"] == 0, sub["transition_analysis"]
+    # 适宜性格网在整个项目范围内都有生成，子范围内只统计范围内的格网（不得等于全量）
+    assert 0 < sub["suitability"]["cell_total"] < full["suitability"]["cell_total"], \
+        sub["suitability"]
+    assert sub["planning_review"]["review_parcel_count"] == 0
+    assert sub["planning_review"]["review_zone_count"] == 0
+    assert sub["accessibility"]["parcel_total"] == 0
+    assert sub["accessibility"]["gap_count"] == 0
+    assert all(i["count"] == 0 for i in sub["land_use_distribution"])
+
+    # 部分重叠子范围：只统计范围内地块，跨界面积裁剪后小于全量
+    part_scope = {"type": "Polygon", "coordinates": [[
+        [114.30, 30.49], [114.335, 30.49], [114.335, 30.512], [114.30, 30.512], [114.30, 30.49]]]}
+    part = client.post("/api/dashboard/summary",
+                       json={"project_id": pid, "scope": part_scope, "scope_label": "部分范围"}).json()
+    assert 0 < part["overview"]["parcel_total"] < full["overview"]["parcel_total"], part["overview"]
+    assert 0 < part["overview"]["area_total_sqm"] < full["overview"]["area_total_sqm"]
+    # 报告中同样严格（与驾驶舱共用数据源）
+    rp = client.post("/api/report/generate", json={
+        "project_name": "范围报告", "period": "Q", "author": "t",
+        "project_id": pid, "scope": far_scope, "scope_label": "空子范围"}).json()
+    assert rp["overview"]["parcel_total"] == 0
+    assert rp["scope"]["strict"] is True
+
+    client.delete(f"/api/projects/{pid}")
+
+
+def test_delete_by_geometry():
+    """v3.0：按几何范围批量删除地块（地图框选删除，锁定项跳过）。"""
+    # 范围完全落在 A-01（id=1，114.3272-114.3347 / 30.504-30.51）内部，
+    # 且避开其它导入地块（x<114.33）
+    box = {"type": "Polygon", "coordinates": [[
+        [114.3285, 30.5055], [114.3295, 30.5055], [114.3295, 30.5085],
+        [114.3285, 30.5085], [114.3285, 30.5055]]]}
+
+    # 非法 mode → 422
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "overlap"})
+    assert resp.status_code == 422
+
+    # 锁定地块 1 → 框选删除被跳过
+    client.post("/api/parcels/1/lock", json={"locked": True})
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "intersects"})
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["deleted"] == [], result
+    assert any(l["id"] == 1 for l in result["locked"]), result
+    assert client.get("/api/parcels/1").status_code == 200  # 未删除
+
+    # 解锁后删除成功
+    client.post("/api/parcels/1/lock", json={"locked": False})
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "intersects"})
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["deleted"] == [1], result
+    assert client.get("/api/parcels/1").status_code == 404
+
+    # within 模式：框不完全包含地块 → 不删除（剩余地块均大于该框）
+    resp = client.post("/api/parcels/delete-by-geometry",
+                       json={"geometry": box, "mode": "within"})
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == []
+
+
+def test_suitability_conflicts_endpoint():
+    """v3.0：适宜性矛盾提示端点（无体检冲突时返回空清单，不报错）。"""
+    resp = client.get("/api/analysis/suitability/conflicts",
+                      params={"project_id": _ensure_project()})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "conflicts" in data and "hint" in data
+    assert data["conflicts"] == []

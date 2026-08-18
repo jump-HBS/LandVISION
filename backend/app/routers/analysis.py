@@ -2,7 +2,8 @@
 """路由组：空间分析 analysis —— 转移矩阵 / 适宜性评价 / 可达性分析（模块一~三）+ 结果查询与联动。"""
 from typing import Optional
 
-from fastapi import (APIRouter, Depends, File, Form, HTTPException, UploadFile)
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
+                     UploadFile)
 
 from ..config import settings
 from ..database import get_db
@@ -39,6 +40,8 @@ async def transition_import(
             name_field=name_field, land_use_field=land_use_field,
             region_code=region_code, project_id=project_id,
         )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except (shp_import.ShpImportError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -120,6 +123,14 @@ def accessibility_results(project_id: Optional[int] = None, db=Depends(get_db)):
 @router.get("/facility-sites", summary="推荐设施选址（盲区 ∩ 高度/中等适宜格网，模块三↔二联动）")
 def facility_sites(project_id: int, db=Depends(get_db)):
     return analysis.facility_sites(db, project_id=project_id)
+
+
+@router.get("/suitability/conflicts", summary="v3.0：适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突地块）")
+def suitability_conflicts(
+    project_id: Optional[int] = Query(None, description="分析项目 id"),
+    db=Depends(get_db),
+):
+    return analysis.suitability_conflicts(db, project_id=project_id)
 
 
 # ===========================================================================

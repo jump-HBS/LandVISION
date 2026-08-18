@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""路由组：兴趣点 pois —— 列表 / GeoJSON / CRUD / 批量删除。"""
+"""路由组：兴趣点 pois —— 列表 / GeoJSON / CRUD / 批量删除 / SHP 导入。"""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
+                     UploadFile)
 
+from ..config import settings
 from ..database import get_db
 from ..schemas import BatchIdsBody, PoiCreate, PoiUpdate
-from ..services import spatial
+from ..services import shp_import, spatial
 
 router = APIRouter(prefix="/pois", tags=["兴趣点"])
 
@@ -55,3 +57,31 @@ def delete_poi(poi_id: int, db=Depends(get_db)):
 @router.post("/batch-delete", summary="批量删除 POI（跳过锁定项）")
 def batch_delete_pois(body: BatchIdsBody, db=Depends(get_db)):
     return spatial.batch_delete_pois(body.ids, db)
+
+
+@router.post("/import", summary="导入 SHP 兴趣点（zip：.shp/.shx/.dbf/.prj，仅点要素，关联项目）")
+async def import_pois_shp(
+    file: UploadFile = File(..., description="SHP 压缩包（WGS84/EPSG:4326，点要素）"),
+    name_field: Optional[str] = Form(None, description="名称字段（可自动识别）"),
+    type_field: Optional[str] = Form(None, description="类型字段（可自动识别）"),
+    period: Optional[str] = Form("base", description="期次：base（基期）/ current（末期）"),
+    project_id: Optional[int] = Form(None, description="所属分析项目 id"),
+    db=Depends(get_db),
+):
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=422, detail="请上传 zip 压缩包（含 .shp/.shx/.dbf/.prj）")
+    content = await file.read()
+    if len(content) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=422,
+                            detail=f"压缩包超过 {settings.max_upload_mb}MB 上限")
+    try:
+        return shp_import.import_pois_from_zip(
+            content, db, name_field=name_field, type_field=type_field,
+            period=period, project_id=project_id,
+        )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (shp_import.ShpImportError, ValueError) as exc:
+        import logging
+        logging.getLogger("landvision.shp_import").warning("POI SHP 导入被拒绝：%s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))

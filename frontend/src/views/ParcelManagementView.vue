@@ -10,12 +10,15 @@
       :highlight-id="highlightId"
       :batch-select="batchMode"
       :show-save-drawing="true"
+      :enable-selection="boxDeleteMode"
+      :selection-delete="true"
       @parcel-click="onMapClick"
       @parcel-detail="onParcelDetail"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
       @batch-selection="onBatchSelection"
       @save-drawing="onSaveDrawing"
+      @selection-delete="onSelectionDelete"
     />
 
     <!-- 左侧：图标按钮 -->
@@ -33,6 +36,14 @@
     <button class="page-icon-btn icon-left4" :class="{ active: panelOpen === 'features' }"
             title="标注图层（地图绘制持久化）" @click="togglePanel('features')">
       <el-icon :size="18"><EditPen /></el-icon>
+    </button>
+    <button class="page-icon-btn icon-left5" :class="{ active: panelOpen === 'pois' }"
+            title="兴趣点管理（点要素 SHP 导入/删除）" @click="togglePanel('pois')">
+      <el-icon :size="18"><Place /></el-icon>
+    </button>
+    <button class="page-icon-btn icon-left6" :class="{ active: boxDeleteMode }"
+            title="框选删除（地图框选/圈选地块后批量删除，跳过锁定项）" @click="toggleBoxDeleteMode">
+      <el-icon :size="18"><Delete /></el-icon>
     </button>
 
     <!-- 左侧展开：地块列表面板 -->
@@ -133,6 +144,47 @@
       </el-table>
     </div>
 
+    <!-- 左侧展开：兴趣点管理面板（v3.0：点面分离，POI 仅接受点要素） -->
+    <div v-if="panelOpen === 'pois'" class="page-panel panel-left glass-panel">
+      <div class="panel-title">兴趣点管理（POI）</div>
+      <div class="scope-hint">
+        兴趣点为点要素（交通/商业/教育/医疗/休闲）。SHP 导入时仅接受点要素，面要素请使用「导入 SHP」地块入口；上传数据必须关联分析项目。
+      </div>
+      <div class="filter-row">
+        <el-select v-model="poiType" placeholder="全部类型" clearable size="small" style="width:110px" @change="loadPois">
+          <el-option v-for="t in ['交通', '商业', '教育', '医疗', '休闲']" :key="t" :label="t" :value="t" />
+        </el-select>
+        <el-button size="small" type="primary" @click="openPoiImport">导入 POI SHP</el-button>
+        <span class="poi-total">共 {{ poiTotal }} 个</span>
+      </div>
+      <el-table :data="poiItems" size="small" max-height="420" v-loading="poiLoading">
+        <el-table-column prop="name" label="名称" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="poi_type" label="类型" width="70">
+          <template #default="{ row }">
+            <el-tag size="small" :color="POI_COLORS[row.poi_type] || undefined" style="border:none;color:#fff">
+              {{ row.poi_type }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="locked" label="锁定" width="56" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.locked" size="small" type="danger">锁定</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="danger" @click="onDeletePoi(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-pagination
+        v-if="poiTotal > poiPageSize"
+        class="mt" background small layout="total, prev, pager, next"
+        :total="poiTotal" :page-size="poiPageSize" :current-page="poiPage"
+        @current-change="loadPois"
+      />
+    </div>
+
     <!-- 详情抽屉 -->
     <ParcelInfo
       v-model="drawerVisible"
@@ -201,8 +253,8 @@
             <el-radio-button label="current">末期</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="所属项目">
-          <el-select v-model="importOpts.project_id" clearable style="width:100%" placeholder="选择分析项目（可选）">
+        <el-form-item label="所属项目（必选）">
+          <el-select v-model="importOpts.project_id" style="width:100%" placeholder="选择分析项目（必选，无项目请先在顶栏创建）">
             <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
         </el-form-item>
@@ -237,6 +289,56 @@
       </template>
     </el-dialog>
 
+    <!-- POI 导入对话框（v3.0：仅点要素，项目必选） -->
+    <el-dialog v-model="poiImportVisible" title="导入 SHP 兴趣点（POI）" width="560px">
+      <el-alert type="info" :closable="false" class="mb"
+        title="要求：zip 压缩包，内含同名 .shp/.shx/.dbf（建议带 .prj）；坐标系为经纬度（WGS84/CGCS2000）；要素必须为点（Point）。面要素请使用「导入 SHP」地块入口；上传数据必须关联分析项目。" />
+      <el-upload drag :auto-upload="false" :limit="1" accept=".zip"
+                 :on-change="onPoiFileChange" :on-remove="() => (poiImportFile = null)">
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">将 POI 点要素 SHP zip 拖到此处，或<em>点击选择文件</em></div>
+      </el-upload>
+      <el-form label-width="110px" class="mt">
+        <el-form-item label="期次">
+          <el-radio-group v-model="poiImportOpts.period">
+            <el-radio-button label="base">基期</el-radio-button>
+            <el-radio-button label="current">末期</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="所属项目（必选）">
+          <el-select v-model="poiImportOpts.project_id" style="width:100%" placeholder="选择分析项目（必选，无项目请先在顶栏创建）">
+            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="名称字段"><el-input v-model="poiImportOpts.name_field" placeholder="自动识别（如 NAME/name）" /></el-form-item>
+        <el-form-item label="类型字段"><el-input v-model="poiImportOpts.type_field" placeholder="自动识别（如 TYPE/类型）" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="poiImportVisible = false">取消</el-button>
+        <el-button type="primary" :loading="poiImporting" :disabled="!poiImportFile" @click="doPoiImport">
+          开始导入
+        </el-button>
+      </template>
+
+      <!-- 导入结果明细 -->
+      <template v-if="poiImportResult">
+        <el-alert class="mt" :type="poiImportResult.imported > 0 ? 'success' : 'warning'" :closable="false"
+          :title="`导入完成：成功 ${poiImportResult.imported} 条，跳过 ${poiImportResult.skipped.length} 条`" />
+        <div v-if="poiImportResult.skipped.length" class="mt" style="max-height:180px;overflow-y:auto">
+          <div v-for="(s, i) in poiImportResult.skipped.slice(0, 20)" :key="i" class="skip-row">
+            <el-tag size="small" type="warning">{{ s.name || '未知要素' }}</el-tag>
+            <span class="skip-reason">{{ s.reason }}</span>
+          </div>
+          <div v-if="poiImportResult.skipped.length > 20" class="skip-more">
+            其余 {{ poiImportResult.skipped.length - 20 }} 条已省略
+          </div>
+        </div>
+        <div v-if="poiImportResult.imported > 0" class="mt">
+          <el-button size="small" type="success" @click="afterPoiImportRefresh">刷新列表与地图</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- 保存绘制对话框 -->
     <el-dialog v-model="saveDrawVisible" title="保存地图绘制" width="440px">
       <el-form label-width="90px">
@@ -267,11 +369,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
-  createParcel, deleteParcel, lockParcel, batchDeleteParcels, batchDeletePois, batchDeleteZones,
-  importParcelsShp, checkParcel, getRegion, getProjects,
+  createParcel, deleteParcel, lockParcel, batchDeleteParcels, deleteParcelsByGeometry,
+  batchDeletePois, batchDeleteZones,
+  importParcelsShp, importPoisShp, getPois, deletePoi,
+  checkParcel, getRegion, getProjects,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
 } from '../api'
-import { LAND_USE_COLORS, LAND_USE_ORDER } from '../utils/colors'
+import { LAND_USE_COLORS, LAND_USE_ORDER, POI_COLORS } from '../utils/colors'
 import MapView from '../components/MapView.vue'
 import ParcelInfo from '../components/ParcelInfo.vue'
 
@@ -311,6 +415,9 @@ const projectName = computed(() => {
 const batchMode = ref(false)
 const batchSelection = ref({ parcel_ids: [], poi_ids: [], zone_ids: [] })
 
+// v3.0：框选删除（地图框选/圈选后删除范围内地块，跳过锁定项）
+const boxDeleteMode = ref(false)
+
 // 地图标注
 const mapFeatures = ref([])
 const featuresLoading = ref(false)
@@ -326,6 +433,19 @@ const importOpts = ref({ period: 'base', project_id: null, name_field: '', land_
 const importing = ref(false)
 const importResult = ref(null)
 
+// v3.0：兴趣点（POI）管理 —— 点要素 SHP 导入 / 列表 / 删除
+const poiItems = ref([])
+const poiTotal = ref(0)
+const poiPage = ref(1)
+const poiPageSize = ref(10)
+const poiType = ref('')
+const poiLoading = ref(false)
+const poiImportVisible = ref(false)
+const poiImportFile = ref(null)
+const poiImportOpts = ref({ period: 'base', project_id: null, name_field: '', type_field: '' })
+const poiImporting = ref(false)
+const poiImportResult = ref(null)
+
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
@@ -334,6 +454,7 @@ onMounted(async () => {
     store.fetchZonesGeojson(),
     loadProjects(),
     loadMapFeatures(),
+    loadPois(),
   ])
   if (route.query.highlight) {
     const id = Number(route.query.highlight)
@@ -570,6 +691,35 @@ async function lockSelectedOnMap() {
   await loadPage(1)
 }
 
+// ---------- v3.0 框选删除（地图框选/圈选范围 → 删除范围内地块） ----------
+function toggleBoxDeleteMode() {
+  boxDeleteMode.value = !boxDeleteMode.value
+  if (!boxDeleteMode.value) mapRef.value?.clearSelection()
+  ElMessage.info(boxDeleteMode.value
+    ? '框选删除模式：使用地图工具（框选/圈选/多边形）划定范围，删除范围内地块（锁定项跳过）'
+    : '已退出框选删除模式')
+}
+
+async function onSelectionDelete(selection) {
+  if (!selection?.count) { ElMessage.warning('所选范围内没有地块'); return }
+  await ElMessageBox.confirm(
+    `确定删除框选范围内的 ${selection.count} 宗地块吗？（锁定地块自动跳过，此操作不可恢复）`,
+    '框选删除确认',
+    { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
+  try {
+    const result = await deleteParcelsByGeometry({ geometry: selection.geometry, mode: 'intersects' })
+    if (result.locked.length) {
+      ElMessage.warning(`${result.locked.length} 宗地块已锁定，已跳过（虚线描边标识）`)
+    }
+    ElMessage.success(`已删除 ${result.deleted.length} 宗地块`)
+    mapRef.value?.clearSelection()
+    await Promise.all([loadPage(1), store.fetchParcelsGeojson(period.value || undefined)])
+  } catch (e) {
+    ElMessage.error('框选删除失败：' + (e?.message || '未知原因'))
+  }
+}
+
 // ---------- 地图标注（绘制持久化） ----------
 async function loadMapFeatures() {
   featuresLoading.value = true
@@ -647,6 +797,11 @@ function onFileChange(file) {
 
 async function doImport() {
   if (!importFile.value) return
+  // v3.0：上传数据强制关联分析项目（后端同样校验，前端先行提示）
+  if (!importOpts.value.project_id) {
+    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+    return
+  }
   importing.value = true
   importResult.value = null
   try {
@@ -676,6 +831,87 @@ async function doImport() {
 async function afterImportRefresh() {
   await loadPage(1)
   ElMessage.success('列表与地图已刷新')
+}
+
+// ---------- v3.0 兴趣点（POI）管理 ----------
+async function loadPois(p) {
+  poiPage.value = p || poiPage.value
+  poiLoading.value = true
+  try {
+    const data = await getPois({
+      poi_type: poiType.value || undefined,
+      page: poiPage.value,
+      page_size: poiPageSize.value,
+    })
+    poiItems.value = data?.items ?? []
+    poiTotal.value = data?.total ?? 0
+  } catch (e) {
+    poiItems.value = []
+  } finally {
+    poiLoading.value = false
+  }
+}
+
+function openPoiImport() {
+  poiImportResult.value = null
+  poiImportFile.value = null
+  poiImportOpts.value = {
+    period: 'base', project_id: ui.currentProjectId || null,
+    name_field: '', type_field: '',
+  }
+  poiImportVisible.value = true
+}
+
+function onPoiFileChange(file) {
+  poiImportFile.value = file.raw
+}
+
+async function doPoiImport() {
+  if (!poiImportFile.value) return
+  if (!poiImportOpts.value.project_id) {
+    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+    return
+  }
+  poiImporting.value = true
+  poiImportResult.value = null
+  try {
+    const fd = new FormData()
+    fd.append('file', poiImportFile.value)
+    fd.append('period', poiImportOpts.value.period || 'base')
+    fd.append('project_id', poiImportOpts.value.project_id)
+    for (const key of ['name_field', 'type_field']) {
+      if (poiImportOpts.value[key]) fd.append(key, poiImportOpts.value[key])
+    }
+    const result = await importPoisShp(fd)
+    poiImportResult.value = result
+    if (result.imported > 0) {
+      ElMessage.success(`POI 导入完成：成功 ${result.imported} 条`)
+      await Promise.all([loadPois(), store.fetchPoisGeojson()])
+    } else {
+      const firstReason = result.skipped?.[0]?.reason || '未知原因'
+      ElMessage.warning(`POI 导入未成功（0 条入库）：${firstReason}，详见下方明细`)
+    }
+  } catch (e) {
+    // 后端拒绝原因已由拦截器弹出提示
+  } finally {
+    poiImporting.value = false
+  }
+}
+
+async function afterPoiImportRefresh() {
+  await Promise.all([loadPois(), store.fetchPoisGeojson()])
+  ElMessage.success('POI 列表与地图已刷新')
+}
+
+async function onDeletePoi(row) {
+  await ElMessageBox.confirm(`确定删除兴趣点 ${row.name} 吗？`, '删除确认', { type: 'warning' })
+  try {
+    await deletePoi(row.id)
+    ElMessage.success('已删除')
+    await Promise.all([loadPois(), store.fetchPoisGeojson()])
+  } catch (e) {
+    ElMessage.warning(e?.message || '删除失败（可能已锁定）')
+  }
 }
 </script>
 
@@ -733,6 +969,16 @@ async function afterImportRefresh() {
   top: 50%;
   transform: translateY(calc(-50% + 64px));
 }
+.icon-left5 {
+  left: 10px;
+  top: 50%;
+  transform: translateY(calc(-50% + 107px));
+}
+.icon-left6 {
+  left: 10px;
+  top: 50%;
+  transform: translateY(calc(-50% + 150px));
+}
 .page-panel {
   position: absolute;
   z-index: 6;
@@ -757,6 +1003,11 @@ async function afterImportRefresh() {
   font-size: 12px;
   color: var(--lv-text-secondary);
   margin-bottom: 10px;
+}
+.poi-total {
+  font-size: 12px;
+  color: var(--lv-text-tertiary);
+  margin-left: auto;
 }
 .mt {
   margin-top: 10px;

@@ -11,6 +11,9 @@
               <el-tag v-if="summary.project?.name" size="small" type="success" effect="plain" style="margin-left:8px">
                 范围：{{ summary.scope.label }}
               </el-tag>
+              <el-tag v-if="summary.scope?.strict" size="small" type="warning" effect="plain" style="margin-left:6px">
+                已按此范围聚合
+              </el-tag>
             </div>
             <div class="project-meta">
               <template v-if="summary.project?.name">
@@ -217,7 +220,7 @@
  * 项目信息 + 流程进度 + 关键结论摘要（点击下钻）+ 问题识别/规划建议 + 范围管理。
  * 数据来自 /api/dashboard/summary（持久化结果优先，与报告生成同源）。
  */
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
@@ -298,7 +301,8 @@ function goto(path) {
 }
 
 function problemDrill(problem) {
-  const map = { 三区三线冲突: '/planning', 三区三线警告: '/planning', 设施盲区: '/accessibility', 违规变化: '/planning' }
+  // v3.0：违规变化 → 转移矩阵页（对变化图斑进行合规检查）
+  const map = { 三区三线冲突: '/planning', 三区三线警告: '/planning', 设施盲区: '/accessibility', 违规变化: '/transition' }
   const path = map[problem.type]
   if (path) router.push(path)
 }
@@ -322,6 +326,11 @@ async function loadSummary() {
 
 onMounted(async () => {
   await Promise.all([loadSummary(), store.fetchParcelsGeojson()])
+})
+
+// v3.0：分析结果版本号变化 → 自动刷新驾驶舱（各分析页成功后 bumpAnalysisVersion）
+watch(() => ui.analysisVersion, () => {
+  if (ui.currentProjectId) loadSummary()
 })
 
 onBeforeUnmount(() => {

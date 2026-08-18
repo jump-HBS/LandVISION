@@ -36,6 +36,10 @@ export const useUiStore = defineStore('ui', {
     linkedPatches: null,   // 转移矩阵 → 体检：图斑 id 列表
     linkedScope: null,     // 转移矩阵 → 适宜性/可达性：图斑并集范围
     linkedScopeLabel: null,
+    linkedFacilityTypes: [], // v3.0：转移矩阵 → 可达性：预置设施类型
+
+    // v3.0：分析结果版本号（各视图完成分析后自增，驾驶舱据此自动刷新）
+    analysisVersion: 0,
 
     // 地图框选结果（跨组件共享）
     selection: null,       // {count, areaSqm, byLandUse, features}
@@ -85,6 +89,12 @@ export const useUiStore = defineStore('ui', {
       this.linkedPatches = patchIds
       this.linkedScope = scope
       this.linkedScopeLabel = label
+    },
+    setLinkedFacilityTypes(types) {
+      this.linkedFacilityTypes = types || []
+    },
+    bumpAnalysisVersion() {
+      this.analysisVersion += 1
     },
     setSelection(selection) {
       this.selection = selection

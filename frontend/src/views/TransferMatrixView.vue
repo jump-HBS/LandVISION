@@ -47,6 +47,11 @@
         </el-button>
       </div>
       <div class="flex-row mb">
+        <span class="scope-hint">导入数据将写入分析项目：</span>
+        <el-tag v-if="ui.currentProject" size="small" type="success">{{ ui.currentProject.name }}</el-tag>
+        <el-tag v-else size="small" type="danger">未选择项目（v3.0 必选，请在顶栏项目工作台选择/创建）</el-tag>
+      </div>
+      <div class="flex-row mb">
         <el-button size="small" type="warning" plain :loading="demoGenerating" @click="generateDemo">
           一键生成演示基期（模拟 1 转换 + 1 消失 + 1 新增）
         </el-button>
@@ -150,7 +155,7 @@
             </el-button>
           </div>
           <div class="scope-hint mt">
-            联动说明：合规检查 → 图斑体检（模块四）；适宜性/可达性 → 以「新增」图斑并集范围作为分析对象（需先选择分析项目，结果按项目持久化）。
+            联动说明：合规检查 → 图斑体检（模块四）；适宜性/可达性 → 以「新增」图斑并集范围作为分析对象（需先选择分析项目，结果按项目持久化）；可达性联动会按矩阵结果自动预置设施类型。
           </div>
         </div>
 
@@ -241,6 +246,12 @@ function linkToSuitability() {
 function linkToAccessibility() {
   if (!requireProject() || !addedGeom.value) return
   ui.setLinkedPatches(null, addedGeom.value, '新增建设用地图斑')
+  // v3.0：按矩阵结果预置设施类型 —— 存在新增建设 → 全类型生活圈校验；否则基础两类
+  const hasNewBuild = (changesFc.value.features || []).some(
+    (f) => f.properties.change_type === '新增建设' || f.properties.kind === '新增')
+  const preset = hasNewBuild ? ['交通', '商业', '教育', '医疗', '休闲'] : ['交通', '商业']
+  ui.setLinkedFacilityTypes(preset)
+  ElMessage.success(`已按矩阵结果预置设施类型：${preset.join('、')}`)
   router.push('/accessibility')
 }
 
@@ -408,12 +419,17 @@ async function importScopeShp() {
 // ---------- 期次数据导入 ----------
 async function doImport() {
   if (!importFile.value) return
+  // v3.0：期次数据导入强制关联分析项目
+  if (!ui.currentProjectId) {
+    ElMessage.warning('请先在顶栏「项目工作台」选择分析项目（v3.0 起上传数据必须关联项目）')
+    return
+  }
   importing.value = true
   try {
     const fd = new FormData()
     fd.append('file', importFile.value)
     fd.append('period', importPeriod.value)
-    if (ui.currentProjectId) fd.append('project_id', ui.currentProjectId)
+    fd.append('project_id', ui.currentProjectId)
     const r = await importTransitionShp(fd)
     ElMessage.success(`已导入 ${r.imported} 宗地块，标记为「${importPeriod.value === 'base' ? '基期' : '末期'}」，跳过 ${r.skipped.length} 条`)
     await store.fetchParcelsGeojson()
@@ -450,6 +466,7 @@ async function runMatrix() {
       scope: scopeGeojson.value || null,
       project_id: ui.currentProjectId || null,
     })
+    ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
   } catch (e) {
     ElMessage.error('计算失败：' + (e?.message || '未知原因'))
   } finally {

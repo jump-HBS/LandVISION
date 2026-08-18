@@ -25,6 +25,7 @@ from ..schemas import LAND_USE_TYPES
 from .. import demo_data
 from .regions import import_regions
 from .spatial import is_demo
+from .projects import get_project
 
 logger = logging.getLogger("landvision.shp_import")
 
@@ -34,6 +35,18 @@ _BATCH_SEQ = [0]
 
 class ShpImportError(Exception):
     """SHP 解析/校验失败（业务异常，路由层转 422）。"""
+
+
+class ProjectNotFoundError(ShpImportError):
+    """project_id 指定但项目不存在（路由层转 404）。"""
+
+
+def require_project(db, project_id) -> None:
+    """v3.0：上传数据强制关联分析项目（项目缺失/不存在则拒绝）。"""
+    if not project_id:
+        raise ShpImportError("请先创建并选择分析项目（project_id 必填），避免数据写入全局数据池")
+    if not get_project(project_id, db):
+        raise ProjectNotFoundError(f"分析项目不存在：id={project_id}，请先创建项目")
 
 
 def _read_prj(files: dict) -> str:
@@ -227,7 +240,10 @@ def import_parcels_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
                             land_use_field: str = None, region_field: str = None,
                             region_code: str = None, period: str = None,
                             project_id: int = None) -> dict:
-    """解析 zip 并将面要素导入地块表（关联项目与期次）。"""
+    """解析 zip 并将面要素导入地块表（v3.0：强制关联项目与期次、几何类型校验）。"""
+    require_project(db, project_id)
+    if period not in ("base", "current"):
+        raise ShpImportError("期次必须为 base（基期）或 current（末期）")
     parsed = parse_shp_zip(zip_bytes)
     fields = parsed["fields"]
     name_f = _pick_field(fields, ["name", "NAME", "地块名称", "XMMC", "MC"], name_field)
@@ -240,11 +256,12 @@ def import_parcels_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
     batch = f"{time.strftime('%m%d%H%M%S')}-{_BATCH_SEQ[0]}"
     for f in parsed["features"]:
         geom = f["geometry"]
-        if geom["type"] == "Point":
-            skipped.append({"reason": "点要素不支持地块导入（仅支持面）", "name": str(f["properties"].get(name_f) or "") if name_f else ""})
+        # v3.0：点面严格分离 —— 地块表仅接受面要素，点要素提示改用 POI 导入
+        if geom["type"] in ("Point", "MultiPoint"):
+            skipped.append({"reason": "点要素请使用「兴趣点（POI）导入」，地块仅支持面要素", "name": str(f["properties"].get(name_f) or "") if name_f else ""})
             continue
         if geom["type"] not in ("Polygon", "MultiPolygon"):
-            skipped.append({"reason": f"不支持的几何类型 {geom['type']}", "name": ""})
+            skipped.append({"reason": f"不支持的几何类型 {geom['type']}（地块仅支持 Polygon/MultiPolygon）", "name": ""})
             continue
         # MultiPolygon 拆分为多个地块（每个部分独立入库）
         polys = [{"type": "Polygon", "coordinates": rings}
@@ -311,3 +328,64 @@ def _insert_parcel(db, record: dict) -> dict:
     """单条地块入库（复用 spatial.create_parcel 的双模式逻辑）。"""
     from .spatial import create_parcel
     return create_parcel(record, db)
+
+
+# ---------------------------------------------------------------------------
+# v3.0：POI（点要素）独立导入 —— 点面数据各归其位
+# ---------------------------------------------------------------------------
+
+_POI_TYPE_MAP = {
+    "学校": "教育", "中学": "教育", "小学": "教育", "大学": "教育", "学院": "教育", "教育": "教育",
+    "医院": "医疗", "诊所": "医疗", "卫生院": "医疗", "医疗": "医疗", "保健": "医疗",
+    "站": "交通", "交通": "交通", "地铁": "交通", "公交": "交通", "机场": "交通", "车站": "交通",
+    "商场": "商业", "超市": "商业", "商业": "商业", "广场": "商业", "市场": "商业", "购物": "商业",
+    "公园": "休闲", "休闲": "休闲", "体育": "休闲", "文化": "休闲", "图书馆": "休闲", "影院": "休闲",
+}
+
+
+def _normalize_poi_type(raw: str) -> str:
+    text = (raw or "").strip()
+    for key, value in _POI_TYPE_MAP.items():
+        if key in text:
+            return value
+    return "商业"
+
+
+def import_pois_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
+                         type_field: str = None, project_id: int = None,
+                         period: str = None) -> dict:
+    """解析 zip 并将点要素导入兴趣点表（v3.0：点面严格分离，POI 仅接受点要素）。"""
+    require_project(db, project_id)
+    parsed = parse_shp_zip(zip_bytes)
+    fields = parsed["fields"]
+    name_f = _pick_field(fields, ["name", "NAME", "MC", "名称", "XMMC"], name_field)
+    type_f = _pick_field(fields, ["type", "TYPE", "poi_type", "LX", "类型", "类别"], type_field)
+
+    imported, skipped = 0, []
+    for f in parsed["features"]:
+        geom = f["geometry"]
+        if geom["type"] == "MultiPoint":
+            skipped.append({"reason": "MultiPoint 请拆分为单点后导入", "name": ""})
+            continue
+        if geom["type"] != "Point":
+            skipped.append({"reason": f"POI 仅支持点要素（当前为 {geom['type']}），面要素请使用地块导入", "name": ""})
+            continue
+        props = f["properties"]
+        name = str(props.get(name_f) or "").strip() if name_f else ""
+        poi_type = _normalize_poi_type(str(props.get(type_f) or "")) if type_f else "商业"
+        try:
+            from .spatial import create_poi
+            create_poi({
+                "name": name or f"POI-{imported + 1}",
+                "poi_type": poi_type,
+                "project_id": project_id,
+                "period": period,
+                "geometry": geom,
+            }, db)
+            imported += 1
+        except Exception as exc:  # noqa: BLE001
+            skipped.append({"reason": str(exc), "name": name or ""})
+    logger.info("POI SHP 导入完成：成功 %d 条，跳过 %d 条", imported, len(skipped))
+    return {"imported": imported, "skipped": skipped, "fields": fields,
+            "has_prj": parsed["has_prj"], "encoding": parsed.get("encoding"),
+            "project_id": project_id}

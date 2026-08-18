@@ -127,6 +127,12 @@ class GeometryCheck(BaseModel):
         return v
 
 
+# ---------- v3.0：按几何范围批量删除 ----------
+class GeometryDelete(BaseModel):
+    geometry: Dict[str, Any] = Field(..., description="删除范围 GeoJSON（Polygon，地图框选）")
+    mode: str = Field("intersects", description="intersects=与范围相交 / within=完全位于范围内")
+
+
 # ---------- 空间分析（转移矩阵 / 适宜性 / 可达性） ----------
 class ScopeBody(BaseModel):
     """通用范围请求体。"""

@@ -74,7 +74,12 @@
         <div v-for="g in legendGroups" :key="g.title" class="legend-group">
           <div class="legend-group-title">{{ g.title }}</div>
           <div v-for="item in g.items" :key="item.label" class="legend-item">
-            <span class="layer-swatch" :style="{ background: item.color }"></span>
+            <!-- v3.0：三区三线图例预览线型（实线/虚线 + 线宽） -->
+            <span v-if="item.line" class="legend-line"
+                  :style="{ borderTopWidth: item.line.width + 'px',
+                            borderTopStyle: item.line.dash?.length ? 'dashed' : 'solid',
+                            borderTopColor: item.color }"></span>
+            <span v-else class="layer-swatch" :style="{ background: item.color }"></span>
             <span>{{ item.label }}</span>
           </div>
         </div>
@@ -110,6 +115,9 @@
         <span>{{ k }}：{{ v }} 宗</span>
       </div>
       <el-button size="small" text type="danger" @click="clearSelection">清除</el-button>
+      <el-button v-if="selectionDelete" size="small" type="danger" @click="emit('selection-delete', selection)">
+        删除选中地块
+      </el-button>
     </div>
 
     <!-- 坐标拾取读数 -->
@@ -176,12 +184,14 @@ const props = defineProps({
   batchSelect: { type: Boolean, default: false },
   // v2.0：显示"保存绘制"按钮（把地图上绘制的点/线/面保存到 map_features 表）
   showSaveDrawing: { type: Boolean, default: false },
+  // v3.0：选择统计面板中显示「删除选中地块」按钮（框选删除，emit selection-delete）
+  selectionDelete: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['parcel-click', 'parcel-detail', 'moveend', 'map-ready',
                           'selection', 'region-select', 'region-locate',
                           'cells-click', 'coverage-click',
-                          'batch-selection', 'save-drawing'])
+                          'batch-selection', 'save-drawing', 'selection-delete'])
 
 const ui = useUiStore()
 const mapContainer = ref(null)
@@ -402,7 +412,12 @@ function addLayer(key, src) {
         'fill-color': paint.fillColor,
         'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.85, 0.55],
       }})
-      map.addLayer({ id: 'parcels-line', type: 'line', source: src, paint: { 'line-color': paint.outline, 'line-width': 1.1 } })
+      map.addLayer({ id: 'parcels-line', type: 'line', source: src, paint: {
+        'line-color': paint.outline, 'line-width': 1.1,
+        // v3.0：锁定地块虚线描边（锁定后不可删除的视觉提示）
+        'line-dasharray': ['case', ['boolean', ['get', 'locked'], false],
+          ['literal', [6, 3]], ['literal', [1, 0]]],
+      } })
       break
     case 'pois':
       map.addLayer({ id: 'pois-circle', type: 'circle', source: src, paint: {
@@ -1036,6 +1051,14 @@ function watchAll() {
   width: 12px;
   height: 12px;
   border-radius: 3px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+/* v3.0：三区三线图例线型预览（实线/虚线 + 线宽） */
+.legend-line {
+  width: 24px;
+  height: 0;
+  border-top: 2px solid transparent;
   display: inline-block;
   flex-shrink: 0;
 }

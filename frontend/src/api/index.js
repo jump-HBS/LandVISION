@@ -13,6 +13,8 @@ export const updateParcel = (id, data) => request.put(`/parcels/${id}`, data)
 export const deleteParcel = (id) => request.delete(`/parcels/${id}`)
 export const lockParcel = (id, locked) => request.post(`/parcels/${id}/lock`, { locked })
 export const batchDeleteParcels = (ids) => request.post('/parcels/batch-delete', { ids })
+// v3.0：按几何范围批量删除（地图框选删除，跳过锁定项）
+export const deleteParcelsByGeometry = (data) => request.post('/parcels/delete-by-geometry', data)
 export const batchSetParcelPeriod = (period, ids) =>
   request.post('/parcels/batch-set-period', null, { params: { period, ids: ids?.join(',') } })
 // SHP 批量导入（multipart：file + period + project_id + 字段）
@@ -40,6 +42,12 @@ export const getPoisGeoJSON = (params) => request.get('/pois/geojson', { params 
 export const createPoi = (data) => request.post('/pois', data)
 export const deletePoi = (id) => request.delete(`/pois/${id}`)
 export const batchDeletePois = (ids) => request.post('/pois/batch-delete', { ids })
+// SHP 点要素导入（multipart：file + period + project_id + 字段；v3.0 点面分离）
+export const importPoisShp = (formData) =>
+  request.post('/pois/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
 
 // ---------- 分析项目 projects（业务上下文） ----------
 export const getProjects = () => request.get('/projects')
@@ -83,6 +91,8 @@ export const getTransitionPatches = (params) => request.get('/analysis/transitio
 export const getSuitabilityTargets = () => request.get('/analysis/suitability/targets')
 export const suitabilityEvaluate = (data) => request.post('/analysis/suitability/evaluate', data, { timeout: 120000 })
 export const getSuitabilityGrids = (params) => request.get('/analysis/suitability/grids', { params })
+// v3.0：适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突地块）
+export const getSuitabilityConflicts = (params) => request.get('/analysis/suitability/conflicts', { params })
 export const accessibilityAnalyze = (data) => request.post('/analysis/accessibility/analyze', data, { timeout: 120000 })
 export const getAccessibilityResults = (params) => request.get('/analysis/accessibility/results', { params })
 export const getFacilitySites = (params) => request.get('/analysis/facility-sites', { params })

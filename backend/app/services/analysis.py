@@ -133,8 +133,10 @@ def _insert_patches(db, project_id: int, records: list) -> list:
     return ids
 
 
-def list_patches(db=None, project_id: Optional[int] = None) -> dict:
-    """查询变化图斑（持久化数据，GeoJSON）。"""
+def list_patches(db=None, project_id: Optional[int] = None,
+                 scope: Optional[dict] = None) -> dict:
+    """查询变化图斑（持久化数据，GeoJSON）。v3.0：可选范围过滤（严格范围聚合）。"""
+    scope_g = _scope_geom(scope)
     if is_demo():
         feats = [
             {"type": "Feature", "geometry": p["geometry"], "properties": {
@@ -143,16 +145,21 @@ def list_patches(db=None, project_id: Optional[int] = None) -> dict:
                 "area_sqm": p["area_sqm"], "change_type": p["change_type"],
                 "is_conflict": p.get("is_conflict")}}
             for p in demo_data.LAND_CHANGE_PATCHES
-            if project_id is None or p.get("project_id") == project_id
+            if (project_id is None or p.get("project_id") == project_id)
+            and (scope_g is None or shape(p["geometry"]).intersects(scope_g))
         ]
         return {"type": "FeatureCollection", "features": feats,
                 "count": len(feats)}
     from geoalchemy2.shape import to_shape
+    from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects
     from shapely.geometry import mapping
     from ..models import LandChangePatch
     q = db.query(LandChangePatch)
     if project_id:
         q = q.filter(LandChangePatch.project_id == project_id)
+    if scope:
+        q = q.filter(ST_Intersects(LandChangePatch.geom,
+                                   ST_GeomFromGeoJSON(json.dumps(scope))))
     rows = q.order_by(LandChangePatch.id).all()
     feats = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)), "properties": {
@@ -175,8 +182,10 @@ def _clear_grids(db, project_id: int):
     db.commit()
 
 
-def list_grids(db=None, project_id: Optional[int] = None) -> dict:
-    """查询适宜性评价格网（持久化数据，GeoJSON）。"""
+def list_grids(db=None, project_id: Optional[int] = None,
+               scope: Optional[dict] = None) -> dict:
+    """查询适宜性评价格网（持久化数据，GeoJSON）。v3.0：可选范围过滤（严格范围聚合）。"""
+    scope_g = _scope_geom(scope)
     if is_demo():
         feats = [
             {"type": "Feature", "geometry": g["geometry"], "properties": {
@@ -184,15 +193,20 @@ def list_grids(db=None, project_id: Optional[int] = None) -> dict:
                 "score": g["score"], "level": g["level"],
                 "factors": g.get("factors_json")}}
             for g in demo_data.SUITABILITY_GRIDS
-            if project_id is None or g.get("project_id") == project_id
+            if (project_id is None or g.get("project_id") == project_id)
+            and (scope_g is None or shape(g["geometry"]).intersects(scope_g))
         ]
         return {"type": "FeatureCollection", "features": feats, "count": len(feats)}
     from geoalchemy2.shape import to_shape
+    from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects
     from shapely.geometry import mapping
     from ..models import SuitabilityGrid
     q = db.query(SuitabilityGrid)
     if project_id:
         q = q.filter(SuitabilityGrid.project_id == project_id)
+    if scope:
+        q = q.filter(ST_Intersects(SuitabilityGrid.geom,
+                                   ST_GeomFromGeoJSON(json.dumps(scope))))
     rows = q.order_by(SuitabilityGrid.id).all()
     feats = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)), "properties": {
@@ -340,34 +354,13 @@ def transition_matrix(db, scope: Optional[dict] = None,
 def import_period_parcels(db, zip_bytes: bytes, period: str,
                           name_field: str = None, land_use_field: str = None,
                           region_code: str = None, project_id: int = None) -> dict:
-    """导入某期次地块 SHP（关联项目）。"""
+    """导入某期次地块 SHP（v3.0：期次与项目在导入时直接落库，不再事后回写）。"""
     from .shp_import import import_parcels_from_zip
-    result = import_parcels_from_zip(
+    return import_parcels_from_zip(
         zip_bytes, db, name_field=name_field, land_use_field=land_use_field,
         region_field=None, region_code=region_code,
+        period=period, project_id=project_id,
     )
-    if is_demo():
-        batch_codes = [f["parcel_code"] for f in _recent_imports_demo(result)]
-        for p in demo_data.PARCELS:
-            if p["parcel_code"] in batch_codes:
-                p["period"] = period
-                p["project_id"] = project_id
-    else:
-        from ..models import Parcel
-        from .shp_import import _BATCH_SEQ
-        batch = f"IMP-{_BATCH_SEQ[0]}-"
-        rows = db.query(Parcel).filter(Parcel.parcel_code.like(f"{batch}%")).all()
-        for r in rows:
-            r.period = period
-            r.project_id = project_id
-        db.commit()
-    result["period"] = period
-    result["project_id"] = project_id
-    return result
-
-
-def _recent_imports_demo(result) -> list:
-    return [p["parcel_code"] for p in demo_data.PARCELS[-result["imported"]:]] if result["imported"] else []
 
 
 def generate_demo_base(db, project_id: int = None) -> dict:
@@ -708,3 +701,39 @@ def facility_sites(db, project_id: int) -> dict:
     return {"type": "FeatureCollection", "features": features,
             "count": len(features),
             "gap_parcel_count": len(gap_ids)}
+
+
+# ===========================================================================
+# 模块联动（v3.0）：适宜性「高度/中等适宜」∩ 体检「冲突」→ 矛盾提示
+# ===========================================================================
+
+def suitability_conflicts(db, project_id: int = None,
+                          scope: Optional[dict] = None) -> dict:
+    """适宜性矛盾提示：高度/中等适宜格网覆盖了体检结论为「冲突」的地块。
+
+    返回冲突地块列表与提示文案；供适宜性页在评价完成后自动校验。
+    """
+    if not project_id:
+        return {"conflicts": [], "hint": "未关联分析项目，跳过适宜性矛盾校验（体检结果按项目持久化）"}
+    from .planning_check import list_results as check_results
+    results = check_results(db, project_id=project_id)
+    conflict_ids = {r["parcel_id"] for r in results if r["conclusion"] == "冲突"}
+    if not conflict_ids:
+        return {"conflicts": [], "hint": None}
+    grids_fc = list_grids(db, project_id=project_id, scope=scope)
+    suitable = [shape(g["geometry"]) for g in grids_fc["features"]
+                if g["properties"]["level"] in ("高度适宜", "中等适宜")]
+    if not suitable:
+        return {"conflicts": [], "hint": None}
+    conflicts = []
+    for p in _load_parcels(db, None):
+        if p["id"] not in conflict_ids:
+            continue
+        if any(p["geom"].intersects(s) for s in suitable):
+            conflicts.append({
+                "parcel_id": p["id"], "parcel_code": p["parcel_code"],
+                "name": p["name"], "land_use": p["land_use"],
+            })
+    hint = (f"{len(conflicts)} 宗地块同时出现「适宜建设（高度/中等适宜）」与「三区三线冲突」矛盾，"
+            "建议复核体检结论或调整评价权重后重新评价。") if conflicts else None
+    return {"conflicts": conflicts, "hint": hint}

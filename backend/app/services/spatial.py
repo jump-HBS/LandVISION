@@ -316,6 +316,41 @@ def batch_delete_parcels(parcel_ids: list, db=None) -> dict:
     return {"deleted": deleted, "locked": locked, "missing": missing}
 
 
+def delete_parcels_by_geometry(geometry: dict, mode: str = "intersects", db=None) -> dict:
+    """v3.0：按几何范围批量删除地块（地图框选删除，跳过锁定项）。
+
+    mode：intersects=与范围相交；within=完全位于范围内。
+    """
+    if is_demo():
+        g = shape(geometry)
+        deleted, locked = [], []
+        for p in list(demo_data.PARCELS):
+            pg = shape(p["geometry"])
+            hit = pg.within(g) if mode == "within" else pg.intersects(g)
+            if not hit:
+                continue
+            if p.get("locked"):
+                locked.append({"id": p["id"], "name": p["name"]})
+                continue
+            demo_data.PARCELS.remove(p)
+            deleted.append(p["id"])
+        return {"mode": mode, "deleted": deleted, "locked": locked}
+    from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects, ST_Within
+    from ..models import Parcel
+    g = ST_GeomFromGeoJSON(json.dumps(geometry))
+    pred = ST_Within(Parcel.geom, g) if mode == "within" else ST_Intersects(Parcel.geom, g)
+    rows = db.query(Parcel).filter(pred).all()
+    deleted, locked = [], []
+    for r in rows:
+        if r.locked:
+            locked.append({"id": r.id, "name": r.name})
+            continue
+        db.delete(r)
+        deleted.append(r.id)
+    db.commit()
+    return {"mode": mode, "deleted": deleted, "locked": locked}
+
+
 def set_parcel_locked(parcel_id: int, locked: bool, db=None) -> Optional[dict]:
     """锁定 / 解锁地块（锁定后不可删除）。"""
     if is_demo():
