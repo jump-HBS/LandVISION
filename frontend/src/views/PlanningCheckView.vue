@@ -245,8 +245,8 @@
             <el-radio-button v-for="(label, code) in ZONE_TYPE_LABELS" :key="code" :label="code">{{ label }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="所属项目">
-          <el-select v-model="zoneImportForm.project_id" clearable style="width:240px" placeholder="选择分析项目（可选）">
+        <el-form-item label="所属项目（必选）">
+          <el-select v-model="zoneImportForm.project_id" style="width:240px" placeholder="选择分析项目（必选，v3.0 上传数据必须关联项目）">
             <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
         </el-form-item>
@@ -524,12 +524,17 @@ function openZoneImport() {
 
 async function importZonesShpFile() {
   if (!zoneImportFile.value) return
+  // v3.0：控制线导入强制关联分析项目
+  if (!zoneImportForm.value.project_id) {
+    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+    return
+  }
   zoneImporting.value = true
   try {
     const fd = new FormData()
     fd.append('file', zoneImportFile.value)
     fd.append('zone_type', zoneImportForm.value.zone_type)
-    if (zoneImportForm.value.project_id) fd.append('project_id', zoneImportForm.value.project_id)
+    fd.append('project_id', zoneImportForm.value.project_id)
     const result = await importZonesShp(fd)
     ElMessage.success(`SHP 导入完成：成功 ${result.imported} 条（${ZONE_TYPE_LABELS[zoneImportForm.value.zone_type]}），跳过 ${result.skipped.length} 条`)
     await loadZones()

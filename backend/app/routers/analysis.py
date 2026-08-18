@@ -39,6 +39,8 @@ async def transition_import(
             name_field=name_field, land_use_field=land_use_field,
             region_code=region_code, project_id=project_id,
         )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except (shp_import.ShpImportError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

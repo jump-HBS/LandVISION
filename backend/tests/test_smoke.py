@@ -56,6 +56,44 @@ def _make_shp_zip(name="test_parcels", encoding="utf-8"):
     return buf.getvalue()
 
 
+def _make_point_shp_zip(name="test_pois"):
+    """构造点要素 Shapefile zip（POI 导入：2 个点 + 名称/类型字段）。"""
+    shp = io.BytesIO()
+    shx = io.BytesIO()
+    dbf = io.BytesIO()
+    w = shapefile.Writer(shp=shp, shx=shx, dbf=dbf, encoding="utf-8")
+    w.field("NAME", "C", 50)
+    w.field("TYPE", "C", 50)
+    w.point(114.339, 30.5045)
+    w.record("测试地铁站", "交通")
+    w.point(114.346, 30.5035)
+    w.record("测试商场", "商业")
+    w.close()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(f"{name}.shp", shp.getvalue())
+        zf.writestr(f"{name}.shx", shx.getvalue())
+        zf.writestr(f"{name}.dbf", dbf.getvalue())
+        zf.writestr(f"{name}.prj",
+                    'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984"],PRIMEM["Greenwich",0],'
+                    'UNIT["Degree",0.0174532925199433]]')
+    return buf.getvalue()
+
+
+def _ensure_project():
+    """确保存在一个分析项目（v3.0：SHP 导入强制关联项目），返回 project_id。"""
+    existing = client.get("/api/projects").json()
+    if existing:
+        return existing[0]["id"]
+    scope = {"type": "Polygon", "coordinates": [[
+        [114.33, 30.49], [114.36, 30.49], [114.36, 30.51], [114.33, 30.51], [114.33, 30.49]]]}
+    resp = client.post("/api/projects", json={
+        "name": "SHP导入测试项目", "base_year": 2020, "current_year": 2026, "scope": scope})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
 def test_root_and_health():
     resp = client.get("/")
     assert resp.status_code == 200
@@ -160,12 +198,38 @@ def test_parcels_flow():
 
 
 def test_shp_import_parcels():
-    """SHP zip 上传 → 解析 → 地块入库（端到端）。"""
+    """SHP zip 上传 → 解析 → 地块入库（端到端，v3.0 强制关联项目）。"""
+    project_id = _ensure_project()
     zip_bytes = _make_shp_zip()
+
+    # 未关联项目 → 422（v3.0：拒绝写入全局数据池）
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("parcels.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111"},
+    )
+    assert resp.status_code == 422
+
+    # 项目不存在 → 404
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"project_id": 99999},
+    )
+    assert resp.status_code == 404
+
+    # 非法期次 → 422
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"project_id": project_id, "period": "future"},
+    )
+    assert resp.status_code == 422
+
+    # 正常导入（关联项目 + 期次）
+    resp = client.post(
+        "/api/parcels/import-shp",
+        files={"file": ("parcels.zip", zip_bytes, "application/zip")},
+        data={"region_code": "420111", "project_id": project_id, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
@@ -177,6 +241,9 @@ def test_shp_import_parcels():
     # 面积必须按几何自动计算（不能为 0/None）——回归：导入地块面积缺失 Bug
     imported_items = [i for i in items if i["parcel_code"].startswith("IMP-")]
     assert all((i["area_sqm"] or 0) > 1000 for i in imported_items), imported_items
+    # 期次与项目随导入落库
+    assert all(i["period"] == "base" for i in imported_items)
+    assert all(i["project_id"] == project_id for i in imported_items)
 
     # 非 zip → 422
     resp = client.post(
@@ -188,16 +255,64 @@ def test_shp_import_parcels():
 
 def test_shp_import_gbk_encoding():
     """GBK 编码 DBF（天地图数据常见）自动回退解析。"""
+    project_id = _ensure_project()
     zip_bytes = _make_shp_zip(name="gbk_parcels", encoding="gbk")
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("gbk.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111"},
+        data={"region_code": "420111", "project_id": project_id, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
     assert result["imported"] == 2, result
     assert result["encoding"] == "gbk"
+
+
+def test_shp_import_pois():
+    """v3.0：POI 点要素导入（点面分离、项目强制关联、类型容错映射）。"""
+    project_id = _ensure_project()
+    point_zip = _make_point_shp_zip()
+
+    # 面要素 zip 用于 POI 导入 → 全部跳过（点面分离提示）
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("parcels.zip", _make_shp_zip(), "application/zip")},
+        data={"project_id": project_id},
+    )
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["imported"] == 0, result
+    assert any("面要素" in s["reason"] for s in result["skipped"]), result
+
+    # 未关联项目 → 422；项目不存在 → 404
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+        data={"project_id": 99999},
+    )
+    assert resp.status_code == 404
+
+    # 正常点要素导入：名称/类型字段自动识别
+    resp = client.post(
+        "/api/pois/import",
+        files={"file": ("pois.zip", point_zip, "application/zip")},
+        data={"project_id": project_id},
+    )
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["imported"] == 2, result
+    assert result["project_id"] == project_id
+
+    pois = client.get("/api/pois", params={"page_size": 100}).json()
+    by_name = {p["name"]: p for p in pois["items"]}
+    assert "测试地铁站" in by_name and "测试商场" in by_name
+    assert by_name["测试地铁站"]["poi_type"] == "交通"
+    assert by_name["测试商场"]["poi_type"] == "商业"
 
 
 def test_shp_import_regions():

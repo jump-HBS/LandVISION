@@ -40,6 +40,12 @@ export const getPoisGeoJSON = (params) => request.get('/pois/geojson', { params 
 export const createPoi = (data) => request.post('/pois', data)
 export const deletePoi = (id) => request.delete(`/pois/${id}`)
 export const batchDeletePois = (ids) => request.post('/pois/batch-delete', { ids })
+// SHP 点要素导入（multipart：file + period + project_id + 字段；v3.0 点面分离）
+export const importPoisShp = (formData) =>
+  request.post('/pois/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
 
 // ---------- 分析项目 projects（业务上下文） ----------
 export const getProjects = () => request.get('/projects')

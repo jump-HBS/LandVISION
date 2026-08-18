@@ -47,6 +47,11 @@
         </el-button>
       </div>
       <div class="flex-row mb">
+        <span class="scope-hint">导入数据将写入分析项目：</span>
+        <el-tag v-if="ui.currentProject" size="small" type="success">{{ ui.currentProject.name }}</el-tag>
+        <el-tag v-else size="small" type="danger">未选择项目（v3.0 必选，请在顶栏项目工作台选择/创建）</el-tag>
+      </div>
+      <div class="flex-row mb">
         <el-button size="small" type="warning" plain :loading="demoGenerating" @click="generateDemo">
           一键生成演示基期（模拟 1 转换 + 1 消失 + 1 新增）
         </el-button>
@@ -408,12 +413,17 @@ async function importScopeShp() {
 // ---------- 期次数据导入 ----------
 async function doImport() {
   if (!importFile.value) return
+  // v3.0：期次数据导入强制关联分析项目
+  if (!ui.currentProjectId) {
+    ElMessage.warning('请先在顶栏「项目工作台」选择分析项目（v3.0 起上传数据必须关联项目）')
+    return
+  }
   importing.value = true
   try {
     const fd = new FormData()
     fd.append('file', importFile.value)
     fd.append('period', importPeriod.value)
-    if (ui.currentProjectId) fd.append('project_id', ui.currentProjectId)
+    fd.append('project_id', ui.currentProjectId)
     const r = await importTransitionShp(fd)
     ElMessage.success(`已导入 ${r.imported} 宗地块，标记为「${importPeriod.value === 'base' ? '基期' : '末期'}」，跳过 ${r.skipped.length} 条`)
     await store.fetchParcelsGeojson()

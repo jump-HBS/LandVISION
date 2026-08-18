@@ -126,6 +126,8 @@ async def import_shp(
             region_field=region_field, region_code=region_code,
             period=period, project_id=project_id,
         )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except (shp_import.ShpImportError, ValueError) as exc:
         import logging
         logging.getLogger("landvision.shp_import").warning("地块 SHP 导入被拒绝：%s", exc)

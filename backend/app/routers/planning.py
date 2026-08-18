@@ -100,6 +100,8 @@ async def import_zones_shp(
             content, db, name_field=name_field, type_field=type_field,
             zone_type=zone_type, project_id=project_id, period=period,
         )
+    except shp_import.ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except (shp_import.ShpImportError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

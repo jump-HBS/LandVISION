@@ -340,34 +340,13 @@ def transition_matrix(db, scope: Optional[dict] = None,
 def import_period_parcels(db, zip_bytes: bytes, period: str,
                           name_field: str = None, land_use_field: str = None,
                           region_code: str = None, project_id: int = None) -> dict:
-    """导入某期次地块 SHP（关联项目）。"""
+    """导入某期次地块 SHP（v3.0：期次与项目在导入时直接落库，不再事后回写）。"""
     from .shp_import import import_parcels_from_zip
-    result = import_parcels_from_zip(
+    return import_parcels_from_zip(
         zip_bytes, db, name_field=name_field, land_use_field=land_use_field,
         region_field=None, region_code=region_code,
+        period=period, project_id=project_id,
     )
-    if is_demo():
-        batch_codes = [f["parcel_code"] for f in _recent_imports_demo(result)]
-        for p in demo_data.PARCELS:
-            if p["parcel_code"] in batch_codes:
-                p["period"] = period
-                p["project_id"] = project_id
-    else:
-        from ..models import Parcel
-        from .shp_import import _BATCH_SEQ
-        batch = f"IMP-{_BATCH_SEQ[0]}-"
-        rows = db.query(Parcel).filter(Parcel.parcel_code.like(f"{batch}%")).all()
-        for r in rows:
-            r.period = period
-            r.project_id = project_id
-        db.commit()
-    result["period"] = period
-    result["project_id"] = project_id
-    return result
-
-
-def _recent_imports_demo(result) -> list:
-    return [p["parcel_code"] for p in demo_data.PARCELS[-result["imported"]:]] if result["imported"] else []
 
 
 def generate_demo_base(db, project_id: int = None) -> dict:
