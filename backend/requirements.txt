@@ -1,0 +1,19 @@
+# 后端依赖（版本与当前 venv 实测一致，可直接安装）
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+SQLAlchemy==2.0.52
+GeoAlchemy2==0.20.0
+psycopg2-binary==2.9.12
+pydantic==2.13.4
+pydantic-settings==2.12.0
+python-dotenv==1.2.2
+shapely==2.1.2
+alembic==1.16.5
+pyshp==3.1.6          # SHP 文件解析（上传导入）
+python-multipart==0.0.20  # 文件/表单上传（SHP 导入）
+httpx==0.28.1        # 仅测试用（TestClient 依赖）
+pytest==9.0.2        # 仅测试用
+
+# ---------- 可选 ----------
+# geopandas
+# fiona

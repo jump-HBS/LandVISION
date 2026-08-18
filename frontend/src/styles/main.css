@@ -1,0 +1,141 @@
+/* ============================================================
+   LandVISION 设计令牌（Design Tokens）
+   浅色/深色双主题：通过 html.dark 切换 CSS 变量
+   ============================================================ */
+:root {
+  /* 品牌色 */
+  --lv-primary: #2e86ab;
+  --lv-primary-light: rgba(46, 134, 171, 0.12);
+  --lv-success: #43aa8b;
+  --lv-warning: #e6a23c;
+  --lv-danger: #ef476f;
+
+  /* 布局 */
+  --lv-radius: 10px;
+  --lv-radius-sm: 6px;
+  --lv-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --lv-shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.14);
+  --lv-panel-padding: 14px;
+
+  /* 表面与文字（浅色） */
+  --lv-bg: #eef1f6;
+  --lv-surface: #ffffff;
+  --lv-surface-glass: rgba(255, 255, 255, 0.88);
+  --lv-border: #e4e7ed;
+  --lv-text: #1f2937;
+  --lv-text-secondary: #6b7280;
+  --lv-text-tertiary: #9ca3af;
+}
+
+html.dark {
+  --lv-bg: #0f1420;
+  --lv-surface: #1a2130;
+  --lv-surface-glass: rgba(26, 33, 48, 0.86);
+  --lv-border: #2b3348;
+  --lv-text: #e5e7eb;
+  --lv-text-secondary: #9ca3af;
+  --lv-text-tertiary: #6b7280;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  background: var(--lv-bg);
+  color: var(--lv-text);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* 地图容器必须显式设置高度 */
+.map-container {
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+  border-radius: var(--lv-radius);
+  overflow: hidden;
+  position: relative;
+}
+
+/* 悬浮玻璃面板（驾驶舱） */
+.glass-panel {
+  background: var(--lv-surface-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--lv-border);
+  border-radius: var(--lv-radius);
+  box-shadow: var(--lv-shadow-lg);
+  padding: var(--lv-panel-padding);
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--lv-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.panel-title::before {
+  content: '';
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--lv-primary);
+}
+
+.page-card {
+  margin-bottom: 16px;
+}
+
+.flex-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.mt {
+  margin-top: 16px;
+}
+.mb {
+  margin-bottom: 12px;
+}
+
+/* 图表容器 */
+.chart {
+  width: 100%;
+  height: 100%;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--lv-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--lv-text-tertiary);
+}
+
+/* 地图内部浮层（工具条/图例/坐标读数）统一风格 */
+.map-widget {
+  position: absolute;
+  z-index: 5;
+  background: var(--lv-surface-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--lv-border);
+  border-radius: var(--lv-radius-sm);
+  box-shadow: var(--lv-shadow);
+  color: var(--lv-text);
+  font-size: 12px;
+}

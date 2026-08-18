@@ -1,0 +1,49 @@
+# ===================================================================
+# LandVISION 生产部署 —— docker compose up -d --build 一键启动
+# 三服务：postgis（数据库） + backend（FastAPI） + frontend（Nginx）
+# 启动后访问 http://localhost:8080
+# ===================================================================
+services:
+  postgis:
+    image: postgis/postgis:16-3.4   # PostgreSQL 16 + PostGIS 3.4
+    container_name: landvision-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: landvision
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次启动自动执行建表与种子数据
+      - ../database/01_init_schema.sql:/docker-entrypoint-initdb.d/01_init_schema.sql:ro
+      - ../database/02_seed_data.sql:/docker-entrypoint-initdb.d/02_seed_data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ../backend
+    container_name: landvision-backend
+    environment:
+      # 容器内通过服务名访问数据库
+      LANDVISION_DB_URL: postgresql+psycopg2://postgres:postgres@postgis:5432/landvision
+      LANDVISION_DEMO: "0"          # 生产强制 POSTGIS 模式
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgis:
+        condition: service_healthy
+
+  frontend:
+    build: ../frontend
+    container_name: landvision-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

@@ -1,0 +1,46 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 环境变量与密钥 ----------
+.env
+.env.local
+*.pem
+
+# ---------- Node / 前端 ----------
+node_modules/
+dist/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------- IDE / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---------- 日志与临时文件 ----------
+*.log
+logs/
+data/
+*.geojson.bak
+_extract/
+
+# ---------- GIS 大文件与数据资产（不入库，可单独存放或 Git LFS） ----------
+*.geojson
+*.shp
+*.dbf
+*.shx
+*.zip
+database/05_cities_counties.json
+backend/app/data/china_regions.json
+backend/app/data/*.json
+!backend/app/data/planning_rules.json
