@@ -201,8 +201,9 @@ def _transition_from_patches(db, project_id: int, scope) -> dict:
 def _count_parcels(db, period: str, scope) -> int:
     scope_g = _scope_geom(scope)
     if is_demo():
+        # v4.0：期次缺省视为基期（与数据库列默认值一致）
         return sum(1 for p in _filter_demo(demo_data.PARCELS, scope_g)
-                   if p.get("period") == period)
+                   if (p.get("period") or "base") == period)
     from sqlalchemy import func
     from ..models import Parcel
     q = db.query(func.count(Parcel.id)).filter(Parcel.period == period)

@@ -107,8 +107,10 @@
 
     <!-- 框选统计结果 -->
     <div v-if="selection && showSelectionPanel && showControls" class="map-widget selection-panel">
-      <div class="selection-title">区域统计</div>
-      <div>地块数：<b>{{ selection.count }}</b></div>
+      <div class="selection-title">区域统计（{{ selection.count + (selection.poi_count || 0) + (selection.zone_count || 0) }} 个要素）</div>
+      <div>地块：<b>{{ selection.count }}</b></div>
+      <div v-if="selection.poi_count">兴趣点：<b>{{ selection.poi_count }}</b></div>
+      <div v-if="selection.zone_count">控制线：<b>{{ selection.zone_count }}</b></div>
       <div>总面积：<b>{{ (selection.areaSqm / 10000).toFixed(2) }}</b> 公顷</div>
       <div v-for="(v, k) in selection.byLandUse" :key="k" class="selection-row">
         <span class="layer-swatch" :style="{ background: LAND_USE_COLORS[k] || '#999' }"></span>
@@ -116,7 +118,7 @@
       </div>
       <el-button size="small" text type="danger" @click="clearSelection">清除</el-button>
       <el-button v-if="selectionDelete" size="small" type="danger" @click="emit('selection-delete', selection)">
-        删除选中地块
+        删除选中要素
       </el-button>
     </div>
 
@@ -186,12 +188,15 @@ const props = defineProps({
   showSaveDrawing: { type: Boolean, default: false },
   // v3.0：选择统计面板中显示「删除选中地块」按钮（框选删除，emit selection-delete）
   selectionDelete: { type: Boolean, default: false },
+  // v4.0：框选/圈选统计时同时收集 POI 与控制线（selection 附带 poi_ids/zone_ids 与计数）
+  selectionCollectAll: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['parcel-click', 'parcel-detail', 'moveend', 'map-ready',
                           'selection', 'region-select', 'region-locate',
                           'cells-click', 'coverage-click',
-                          'batch-selection', 'save-drawing', 'selection-delete'])
+                          'batch-selection', 'save-drawing', 'selection-delete',
+                          'poi-click', 'poi-detail'])
 
 const ui = useUiStore()
 const mapContainer = ref(null)
@@ -414,9 +419,10 @@ function addLayer(key, src) {
       }})
       map.addLayer({ id: 'parcels-line', type: 'line', source: src, paint: {
         'line-color': paint.outline, 'line-width': 1.1,
-        // v3.0：锁定地块虚线描边（锁定后不可删除的视觉提示）
-        'line-dasharray': ['case', ['boolean', ['get', 'locked'], false],
-          ['literal', [6, 3]], ['literal', [1, 0]]],
+        // v4.0：锁定地块粗虚线；末期地块细虚线（与基期实线区分，避免两期混叠）
+        'line-dasharray': ['case',
+          ['boolean', ['get', 'locked'], false], ['literal', [6, 3]],
+          ['match', ['get', 'period'], 'current', ['literal', [3, 2]], ['literal', [1, 0]]]],
       } })
       break
     case 'pois':
@@ -552,12 +558,38 @@ function onParcelClick(e) {
   if (popupEl) popup.on('close', () => popupEl.remove())
 }
 
-/** POI 点击：批量选择模式下进入选中集 */
+/** POI 点击（v4.0）：批量选择模式下进入选中集；否则弹属性卡片（可定位/查看详情） */
 function onPoiClick(e) {
-  if (activeTool.value || !props.batchSelect) return
+  if (activeTool.value) return
   const feature = e.features?.[0]
   if (!feature) return
-  toggleBatch('poi_ids', feature.id ?? feature.properties?.id, feature)
+  if (props.batchSelect) {
+    toggleBatch('poi_ids', feature.id ?? feature.properties?.id, feature)
+    return
+  }
+  emit('poi-click', feature)
+  if (!props.enablePopup) return
+
+  const p = feature.properties || {}
+  const popupEl = document.createElement('div')
+  popupEl.className = 'lv-popup'
+  popupEl.innerHTML = `
+    <div class="lv-popup-title">${p.name || '兴趣点'}</div>
+    <div class="lv-popup-row"><span>类型</span><b>${p.poi_type || '-'}</b></div>
+    <div class="lv-popup-row"><span>坐标</span><b>${e.lngLat.lng.toFixed(5)}, ${e.lngLat.lat.toFixed(5)}</b></div>
+    <div class="lv-popup-actions">
+      <button class="lv-popup-btn primary" data-act="zoom">定位</button>
+      <button class="lv-popup-btn" data-act="detail">查看详情</button>
+    </div>`
+  popupEl.querySelector('[data-act="zoom"]').onclick = () => {
+    map.flyTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: Math.max(map.getZoom(), 15) })
+    popup?.remove()
+  }
+  popupEl.querySelector('[data-act="detail"]').onclick = () => { emit('poi-detail', feature); popup?.remove() }
+
+  const popup = new maplibregl.Popup({ closeButton: true, offset: 8 })
+    .setLngLat(e.lngLat).setDOMContent(popupEl).addTo(map)
+  popup.on('close', () => popupEl.remove())
 }
 
 /** 三区三线控制线点击：批量选择模式下进入选中集 */
@@ -791,6 +823,20 @@ function applySelection(shape, shapeGeojson) {
     areaSqm += f.properties.area_sqm || 0
   })
   selection.value = { count: features.length, areaSqm, byLandUse, features, geometry: shapeGeojson }
+  // v4.0：圈选删除 —— 同时收集范围内的 POI 与控制线（质心命中口径，与批量删除一致）
+  if (props.selectionCollectAll) {
+    const poiFeatures = (props.pois.features || []).filter((f) => featureInShape(f, shape))
+    const zoneFeatures = (props.zones.features || []).filter((f) => featureInShape(f, shape))
+    selection.value = {
+      ...selection.value,
+      poi_ids: poiFeatures.map((f) => f.id ?? f.properties?.id),
+      poi_features: poiFeatures,
+      poi_count: poiFeatures.length,
+      zone_ids: zoneFeatures.map((f) => f.id ?? f.properties?.id),
+      zone_features: zoneFeatures,
+      zone_count: zoneFeatures.length,
+    }
+  }
   ui.setSelection(selection.value)
   // 选择图形保留在地图
   map.getSource('selection-source').setData(shapeGeojson)

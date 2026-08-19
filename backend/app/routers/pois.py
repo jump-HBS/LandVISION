@@ -7,7 +7,7 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 
 from ..config import settings
 from ..database import get_db
-from ..schemas import BatchIdsBody, PoiCreate, PoiUpdate
+from ..schemas import BatchIdsBody, LockBody, PoiCreate, PoiUpdate
 from ..services import shp_import, spatial
 
 router = APIRouter(prefix="/pois", tags=["兴趣点"])
@@ -57,6 +57,14 @@ def delete_poi(poi_id: int, db=Depends(get_db)):
 @router.post("/batch-delete", summary="批量删除 POI（跳过锁定项）")
 def batch_delete_pois(body: BatchIdsBody, db=Depends(get_db)):
     return spatial.batch_delete_pois(body.ids, db)
+
+
+@router.post("/{poi_id}/lock", summary="v4.0：锁定 / 解锁 POI（锁定后不可删除）")
+def lock_poi(poi_id: int, body: LockBody, db=Depends(get_db)):
+    data = spatial.set_poi_locked(poi_id, body.locked, db)
+    if not data:
+        raise HTTPException(status_code=404, detail="POI 不存在")
+    return data
 
 
 @router.post("/import", summary="导入 SHP 兴趣点（zip：.shp/.shx/.dbf/.prj，仅点要素，关联项目）")

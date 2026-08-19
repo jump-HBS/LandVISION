@@ -55,7 +55,7 @@ DESCRIPTIONS = {
     "backend/Dockerfile": "后端生产镜像：安装依赖并暴露 8000 端口（配合 deploy/docker-compose.yml）。",
     "backend/__init__.py": "backend 包标记文件（空文件）。",
     "backend/examples/parcel_crud_practice.py": "教学练习脚本：用最小代码演示 FastAPI 路由 + Pydantic 校验 + 内存数据库三件套，独立运行于 8001 端口，与正式分层结构对比学习。",
-    "backend/tests/test_smoke.py": "全链路冒烟测试（20 项，v3.0）：健康检查、地块 CRUD/期次筛选/锁定/批量删除/框选删除（delete-by-geometry）、SHP 导入端到端（内存 zip，含项目强制关联 422/404 校验）、POI 点要素导入（点面分离）、行政区、POI、三区三线体检（规则矩阵/判定依据/锁定）、项目 CRUD 与范围校验、四大结果持久化、地图标注、驾驶舱严格范围聚合（子范围不泄漏）、适宜性矛盾端点、综合分析报告（校验六章节与 12 大类）。",
+    "backend/tests/test_smoke.py": "全链路冒烟测试（20 项，v4.0）：健康检查、地块 CRUD/期次筛选/锁定/批量删除/框选删除（delete-by-geometry）、SHP 导入端到端（内存 zip，含项目强制关联 422/404 校验）、POI 点要素导入（点面分离）与锁定保护（锁定后删除 409、批量删除跳过）、行政区、POI、三区三线体检（规则矩阵/判定依据/锁定）、项目 CRUD 与范围校验、四大结果持久化、地图标注、驾驶舱严格范围聚合（子范围不泄漏）、适宜性矛盾端点、综合分析报告（校验六章节与 12 大类）。",
     "backend/migrations/env.py": "Alembic 迁移运行环境：加载 app.models 的元数据，支持在线/离线执行迁移。",
     "backend/migrations/script.py.mako": "迁移脚本生成模板（alembic revision 命令用）。",
     "backend/migrations/versions/0001_initial.py": "迁移 0001：初始建表（parcels/pois/planning_control/change_records/regions + 空间索引）。",
@@ -77,7 +77,7 @@ DESCRIPTIONS = {
     "backend/app/data/planning_rules.json": "体检规则矩阵配置（v2.0）：默认规则参考国土空间规划管控逻辑（耕地占基本农田=允许、建设用地占红线=冲突等），可通过 PUT /api/planning/rules 更新。",
     "backend/app/routers/__init__.py": "路由包说明。",
     "backend/app/routers/parcels.py": "地块路由（v3.0）：分页列表/GeoJSON（均支持 period 期次过滤）/CRUD/SHP 批量导入（强制关联项目与期次，缺失 422、项目不存在 404）/批量删除（跳过锁定）/按几何范围批量删除 delete-by-geometry（框选删除，intersects/within）/锁定解锁/批量设置期次。",
-    "backend/app/routers/pois.py": "兴趣点路由（v3.0）：分页列表/GeoJSON/按类型过滤/新建/删除/批量删除（跳过锁定）/SHP 点要素导入（import，仅点要素，强制关联项目，点面分离）。",
+    "backend/app/routers/pois.py": "兴趣点路由（v4.0）：分页列表/GeoJSON（含 locked 属性）/按类型过滤/新建/删除/批量删除（跳过锁定）/锁定解锁（{id}/lock，锁定后不可删除、圈选删除自动跳过）/SHP 点要素导入（import，仅点要素，强制关联项目，点面分离）。",
     "backend/app/routers/analysis.py": "空间分析路由（模块一~三，v3.0）：转移矩阵（期次 SHP 导入/演示基期/计算，结果持久化，导入强制项目关联）+ 图斑查询、适宜性评价（刚性约束+格网持久化）+ 格网查询、可达性分析（结果持久化）+ 结果查询、盲区∩适宜区设施选址、适宜性矛盾提示（suitability/conflicts）、SHP 范围解析。",
     "backend/app/routers/planning.py": "三区三线体检路由（模块四，v3.0）：标准三线控制线管理（含批量删除/锁定/SHP 导入，导入强制项目关联）、规则矩阵查看与更新（GET/PUT rules）、单地块/任意几何体检（含判定依据）、批量体检（结果持久化）、变化图斑体检（模块一→四联动）、结果查询、台账 CSV 导出。",
     "backend/app/routers/projects.py": "分析项目路由（v2.0）：项目 CRUD —— 新建（名称+基期/末期年份+可选范围）、更新（范围变更需 confirm_scope_change 确认）、删除（结果级联删除）。",
@@ -87,7 +87,7 @@ DESCRIPTIONS = {
     "backend/app/routers/regions.py": "行政区划路由：省/市/县列表与 GeoJSON/详情/下级/定位（中心+bbox）/SHP 导入。",
     "backend/app/routers/system.py": "系统路由：服务运行信息 / 最近操作审计日志。",
     "backend/app/services/__init__.py": "服务包说明。",
-    "backend/app/services/spatial.py": "空间查询与地块 CRUD 服务（v3.0）：分页+bbox 视野查询（含 period 过滤）、GeoJSON 序列化、面积自动计算、编号唯一校验、锁定/批量删除/批量设置期次/按几何范围批量删除（delete_parcels_by_geometry，框选删除跳过锁定）；双模式分支的样板。",
+    "backend/app/services/spatial.py": "空间查询与地块/POI CRUD 服务（v4.0）：分页+bbox 视野查询（含 period 过滤，期次缺省视为基期）、GeoJSON 序列化、面积自动计算、编号唯一校验、锁定/批量删除（单次 IN 查询支撑圈选删除海量要素）/批量设置期次/按几何范围批量删除（delete_parcels_by_geometry）/POI 锁定（set_poi_locked）；双模式分支的样板。",
     "backend/app/services/regions.py": "行政区服务：省/市/县查询、GeoJSON、定位（质心+包围盒）、SHP 导入。",
     "backend/app/services/shp_import.py": "SHP 导入服务（v3.0）：zip 解析（pyshp）→ 坐标系校验（仅 WGS84）→ 字段自动/手动映射 → 地类容错映射到 12 大类 → 批量入库；地块仅接受面要素、POI 仅接受点要素（import_pois_from_zip，点面分离）；require_project 强制项目关联（缺失 422、不存在 404），期次随导入直接落库。",
     "backend/app/services/planning_check.py": "三区三线体检服务（模块四，v3.0 规则矩阵版）：标准三线控制线管理（SHP 导入强制项目关联）、单地块/任意几何体检（规则矩阵判定 + 判定依据含亩数）、批量占用叠加 review_occupancy（结果持久化 planning_check_results）、变化图斑体检 review_patches（回写图斑冲突标记）、台账 CSV。",
@@ -106,23 +106,23 @@ DESCRIPTIONS = {
     "frontend/nginx.conf": "生产 Nginx 配置：托管构建产物、/api 反向代理到后端容器、history 路由回退到 index.html。",
     "frontend/Dockerfile": "前端生产镜像：多阶段构建（node 构建 → nginx 托管），暴露 80 端口。",
     "frontend/src/main.js": "应用入口：创建 Vue 应用、注册 Pinia 与 Router、全局注册全部 Element Plus 图标、应用主题。",
-    "frontend/src/App.vue": "主布局与全局导航（v2.0）：折叠侧边栏（菜单分组 + 推荐流程编号 ①~⑥）、顶栏（分析项目选择/新建入口、搜索/通知/主题/用户/帮助）、路由出口。",
+    "frontend/src/App.vue": "主布局与全局导航（v4.0）：折叠侧边栏（菜单分组 + 推荐流程编号 ①~⑥）、顶栏（分析项目选择/新建入口、后端连接状态指示（每 20 秒探测 /healthz，后端未启动时可见提示）、搜索/通知/主题/用户/帮助）、路由出口。",
     "frontend/src/router/index.js": "Vue Router：7 条路由（Dashboard/地块管理/转移矩阵/适宜性/可达性/三区三线体检/报告），路由切换时同步 document.title。",
     "frontend/src/stores/parcel.js": "Pinia 地块状态：地块列表/地块 GeoJSON/POI GeoJSON/规划要素 GeoJSON、加载 actions、总面积 getter；各页面共享一处更新处处联动。",
     "frontend/src/stores/ui.js": "Pinia UI 状态（v3.0）：深浅主题、图层可见性、行政区筛选、框选结果、分析项目上下文（currentProject/currentProjectId）、模块联动参数（linkedPatches/linkedScope/linkedFacilityTypes）、分析版本号 analysisVersion（各分析页成功后自增，驾驶舱自动刷新）、顶栏通知。",
-    "frontend/src/api/index.js": "接口封装汇总（v3.0）：按后端 10 组路由分组导出全部 API 函数（含 multipart 上传与 blob 下载），含 POI 导入 importPoisShp、框选删除 deleteParcelsByGeometry、适宜性矛盾 getSuitabilityConflicts；页面不直接写 URL。",
+    "frontend/src/api/index.js": "接口封装汇总（v4.0）：按后端 10 组路由分组导出全部 API 函数（含 multipart 上传与 blob 下载），含 POI 导入 importPoisShp、POI 锁定 lockPoi、框选删除 deleteParcelsByGeometry、适宜性矛盾 getSuitabilityConflicts；页面不直接写 URL。",
     "frontend/src/utils/request.js": "Axios 实例封装：baseURL=/api、请求/响应拦截器、统一错误提示（适配后端 {code,message,detail}）、超时设置。",
     "frontend/src/utils/colors.js": "配色规范（v3.0）：12 大类国标色、POI 类型色、变化图斑色；三区三线标准术语与制图样式（ZONE_TYPE_LABELS/ZONE_TYPE_COLORS/ZONE_TYPE_LINE_STYLES：红线 #E53935 实线 3px、基本农田 #FFB300 实线 2.5px、开发边界 #1E88E5 虚线 2px）；体检结论配色；图例元数据（ZONE_LEGEND 附线型 line 元数据，图例面板预览实线/虚线样式）。",
     "frontend/src/utils/geo.js": "前端几何工具：坐标距离（米）、多边形面积（㎡）、点/要素与框选/圈选/多边形的包含判断（地图框选统计的底层实现）。",
     "frontend/src/directives/drag.js": "v-drag 自定义指令：让地图上的图标栏/浮动面板可拖拽移动。",
     "frontend/src/styles/main.css": "全局样式与设计令牌：CSS 变量（主题色/圆角/阴影/文本色）、玻璃拟态面板、页面图标按钮、通用布局类。",
-    "frontend/src/components/MapView.vue": "核心地图组件（v3.0）：OpenFreeMap 底图+卫星影像、图层管理（地块/POI/三区三线规范线型/变化图斑/适宜性格网/可达性覆盖/行政区边界）、框选圈选多边形选择统计（可配置「删除选中地块」按钮 selectionDelete/selection-delete）、距离面积测量、悬停高亮、点击弹窗、批量选择模式（抛 batch-selection）、保存绘制（抛 save-drawing）、锁定地块虚线描边、图例线型预览（三区三线实线/虚线+线宽）、地图视野持久化、对外暴露 flyTo/fitBounds/clearBatchSelection/clearDrawing/clearSelection/getMap。",
+    "frontend/src/components/MapView.vue": "核心地图组件（v4.0）：OpenFreeMap 底图+卫星影像、图层管理（地块/POI/三区三线规范线型/变化图斑/适宜性格网/可达性覆盖/行政区边界）、框选圈选多边形选择统计（selectionCollectAll 同步收集地块+POI+控制线，「删除选中要素」一键批量删除）、POI 点击属性弹窗（定位/查看详情，emit poi-click/poi-detail）、距离面积测量、悬停高亮、点击弹窗、批量选择模式（抛 batch-selection）、保存绘制（抛 save-drawing）、锁定地块虚线描边 + 末期地块细虚线（与基期实线区分）、图例线型预览、地图视野持久化、对外暴露 flyTo/fitBounds/clearBatchSelection/clearDrawing/clearSelection/getMap。",
     "frontend/src/components/RegionSelector.vue": "行政区选择器：国家→省→市→县四级级联检索、定位飞行、点击外部关闭；固定在地图右上角。",
     "frontend/src/components/StatsCard.vue": "专业指标卡：数值/单位/图标/分组标签/环比变化/副文本/迷你趋势折线。",
     "frontend/src/components/ParcelInfo.vue": "地块详情抽屉（v2.0）：地块属性（期次/所属项目/锁定状态）+ 三区三线体检结论（重叠亩数 + 冲突/警告判定依据）+ 地图定位 + 模块跳转（查看体检结果/查看转移矩阵记录，自动携带地块 ID）。",
     "frontend/src/views/DashboardView.vue": "数据驾驶舱（v3.0 项目工作台）：当前项目信息（名称/基期末期年份/范围，含「已按此范围聚合」严格范围徽标）与流程进度条（①~⑥ 完成状态）、范围划定/变更对话框（行政区任意层级/SHP，变更确认机制）、关键结论摘要卡片（冲突地块/设施盲区/耕地净减少/高度适宜占比，点击下钻对应模块）、问题识别与规划建议清单（违规变化→转移矩阵页钻取）、用地结构/体检占用/适宜性/转移矩阵图表；数据来自 /api/dashboard/summary（持久化结果优先+严格范围聚合），watch analysisVersion 自动刷新。",
-    "frontend/src/views/ParcelManagementView.vue": "地块管理（v3.0）：期次筛选（全部/基期/末期，表格与地图同步）、上传强制关联项目与期次（前端先行校验）、地图批量选择模式（点击地块/POI/控制线进入选中集 → 批量删除/锁定）、框选删除模式（地图框选/圈选范围 → delete-by-geometry 批量删除，锁定项跳过）、兴趣点管理面板（POI 点要素 SHP 导入/列表/删除）、锁定地块（虚线描边，锁定后不可删除）、标注面板（地图绘制保存至 map_features 并支持锁定/删除）、详情抽屉（期次/项目/判定依据/模块跳转）。",
-    "frontend/src/views/TransferMatrixView.vue": "模块一 用地变化转移矩阵（v3.0）：基期/末期 SHP 分次导入（强制关联项目）、一键生成演示基期、范围继承项目、矩阵透视表（色深=面积）、消失/新增图斑标签、面积增减图、变化图斑上图；模块联动按钮：对变化图斑进行合规检查（→体检）、评估新增用地适宜性（→适宜性）、分析新增用地设施可达性（→可达性，图斑并集范围随 ui store 传递，并按矩阵结果预置设施类型）。",
+    "frontend/src/views/ParcelManagementView.vue": "地块管理（v4.0）：期次显示开关（勾选基期/末期即显示，表格+地图同步，基期实线/末期虚线避免混叠）、上传强制关联项目与期次（前端先行校验）、地图圈选删除（框选/圈选/多边形绘制范围 → 自动统计范围内地块+兴趣点+控制线 → 一键批量删除，锁定项跳过）、POI 点要素点击查看属性（弹窗+详情对话框，可定位/锁定/删除）、兴趣点管理面板（SHP 导入/列表/锁定/删除）、锁定地块（虚线描边，锁定后不可删除）、标注面板（地图绘制保存至 map_features）、详情抽屉（期次/项目/判定依据/模块跳转）。",
+    "frontend/src/views/TransferMatrixView.vue": "模块一 用地变化转移矩阵（v4.0）：两期数据统一在地块管理模块导入（本页不再提供重复导入入口）；期次显示开关（勾选显示哪期就显示哪期）、范围继承项目、矩阵透视表（色深=面积）、消失/新增图斑标签、面积增减图、变化图斑上图；模块联动按钮：对变化图斑进行合规检查（→体检）、评估新增用地适宜性（→适宜性）、分析新增用地设施可达性（→可达性，图斑并集范围随 ui store 传递，并按矩阵结果预置设施类型）。",
     "frontend/src/views/SuitabilityView.vue": "模块二 土地适宜性评价（v3.0）：评价目标切换（建设/耕地）、因子权重滑杆（自动归一化）、范围默认继承项目（转移矩阵联动范围优先）、40×40 格网四级适宜性专题图（永久基本农田/生态保护红线刚性约束强制不适宜）、等级分布图、格网点击弹分、适宜性矛盾提示（高度/中等适宜 ∩ 体检冲突地块，评价完成后自动校验）、「查看体检结论」反向校验联动。",
     "frontend/src/views/AccessibilityView.vue": "模块三 服务设施可达性分析（v3.0）：设施类型多选（接收转移矩阵联动预置并提示）、服务半径滑杆+预设、范围默认继承项目（联动范围优先）、覆盖率饼图、盲区清单（行点击定位）、覆盖/盲区红绿专题图与图斑弹窗、「推荐设施选址」（盲区∩适宜布局区，蓝色虚线展示候选区域）。",
     "frontend/src/views/PlanningCheckView.vue": "模块四 三区三线合规性批量体检（v3.0）：标准三线控制线（SHP 导入选择约束类型并强制关联项目/图上绘制/批量删除/锁定）、规则矩阵对话框（12 地类 × 三线）、批量体检（结果持久化，台账含判定依据与重叠亩数）、变化图斑联动体检（接收转移矩阵参数自动执行）、判定依据明细表、台账 CSV 导出（含判定依据）。",
@@ -312,7 +312,7 @@ def build():
         doc.add_paragraph()
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("细化到每个文件的职责说明 · v3.0")
+    run = p.add_run("细化到每个文件的职责说明 · v4.0")
     set_font(run, "宋体", 13, color=(0x66, 0x6E, 0x79))
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER

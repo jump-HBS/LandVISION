@@ -41,6 +41,7 @@ export const getPois = (params) => request.get('/pois', { params })
 export const getPoisGeoJSON = (params) => request.get('/pois/geojson', { params })
 export const createPoi = (data) => request.post('/pois', data)
 export const deletePoi = (id) => request.delete(`/pois/${id}`)
+export const lockPoi = (id, locked) => request.post(`/pois/${id}/lock`, { locked })
 export const batchDeletePois = (ids) => request.post('/pois/batch-delete', { ids })
 // SHP 点要素导入（multipart：file + period + project_id + 字段；v3.0 点面分离）
 export const importPoisShp = (formData) =>

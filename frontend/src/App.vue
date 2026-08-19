@@ -77,6 +77,15 @@
             />
           </el-select>
 
+          <!-- v4.0：后端连接状态指示（静默失败改为可见提示） -->
+          <el-tooltip :content="backendStatus === 'ok' ? '后端服务正常（点击重新检测）' : '后端未启动或无法连接，请双击「启动项目.bat」或检查后端命令行窗口'"
+                      placement="bottom">
+            <span class="backend-status" @click="checkBackend">
+              <span class="status-dot" :class="backendStatus"></span>
+              <span class="status-text">{{ backendStatus === 'ok' ? '后端已连接' : '后端未连接' }}</span>
+            </span>
+          </el-tooltip>
+
           <!-- 消息通知 -->
           <el-popover placement="bottom-end" width="300" trigger="click">
             <template #reference>
@@ -159,7 +168,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from './stores/ui'
@@ -227,7 +236,31 @@ async function createProjectNow() {
   }
 }
 
-onMounted(loadProjects)
+onMounted(() => {
+  loadProjects()
+  checkBackend()
+  backendTimer = setInterval(checkBackend, 20000)  // v4.0：每 20 秒探测一次后端
+})
+
+onBeforeUnmount(() => {
+  if (backendTimer) clearInterval(backendTimer)
+})
+
+// ---------- v4.0 后端连接状态 ----------
+const backendStatus = ref('checking')  // checking | ok | down
+let backendTimer = null
+
+async function checkBackend() {
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 4000)
+    const resp = await fetch('/api/system/info', { signal: ctrl.signal })
+    clearTimeout(timer)
+    backendStatus.value = resp.ok ? 'ok' : 'down'
+  } catch (e) {
+    backendStatus.value = 'down'
+  }
+}
 
 // 全局搜索
 const searchValue = ref(null)
@@ -357,6 +390,34 @@ function onSearchSelect(parcelId) {
   cursor: pointer;
   color: var(--lv-text);
   outline: none;
+}
+/* v4.0：后端连接状态指示 */
+.backend-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--lv-bg);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+.status-dot.ok {
+  background: #16a34a;
+  box-shadow: 0 0 4px #16a34a;
+}
+.status-dot.down {
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+}
+.status-text {
+  font-size: 12px;
+  color: var(--lv-text-secondary);
 }
 .user-name {
   font-size: 13px;
