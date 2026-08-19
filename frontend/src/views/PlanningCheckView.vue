@@ -3,7 +3,7 @@
     <!-- 全屏地图 -->
     <MapView
       ref="mapRef"
-      :parcels="store.parcelsGeojson"
+      :parcels="mapParcelsGeojson"
       :zones="zonesGeojson"
       :region-boundary="boundaryGeojson"
       :highlight-id="highlightZoneId"
@@ -13,6 +13,7 @@
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
+      @moveend="onMoveEnd"
     />
 
     <!-- 左侧：图标栏 -->
@@ -368,10 +369,27 @@ const reasonRows = computed(() => {
   return rows
 })
 
+// v4.0.1：按视野 bbox 加载地块（GiST 索引毫秒级，替代海量数据全量拉取）
+const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
+const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
+const lastBbox = ref(null)
+let mapFetchSeq = 0
+
+async function loadMapParcels(bbox) {
+  const seq = ++mapFetchSeq
+  const fc = await store.fetchParcelsGeojsonBbox(['base', 'current'], bbox || lastBbox.value || DEFAULT_BBOX)
+  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+}
+
+function onMoveEnd(bbox) {
+  lastBbox.value = bbox
+  loadMapParcels(bbox)
+}
+
 onMounted(async () => {
   await Promise.all([
     store.fetchParcels({ page: 1, page_size: 100 }),
-    store.fetchParcelsGeojson(),
+    loadMapParcels(),
     loadProjects(),
     loadRules(),
   ])

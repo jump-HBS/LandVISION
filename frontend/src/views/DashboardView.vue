@@ -224,7 +224,6 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
   getRegions, getRegionChildren, getRegion, getRegionLocate,
@@ -233,7 +232,6 @@ import {
 import { LAND_USE_COLORS, LAND_USE_ORDER, ZONE_TYPE_LABELS, ZONE_TYPE_COLORS } from '../utils/colors'
 import StatsCard from '../components/StatsCard.vue'
 
-const store = useParcelStore()
 const ui = useUiStore()
 const router = useRouter()
 
@@ -325,7 +323,8 @@ async function loadSummary() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadSummary(), store.fetchParcelsGeojson()])
+  // v4.0.1：驾驶舱无地图图层，移除 40~60 秒的全量地块 GeoJSON 预热
+  await loadSummary()
 })
 
 // v3.0：分析结果版本号变化 → 自动刷新驾驶舱（各分析页成功后 bumpAnalysisVersion）

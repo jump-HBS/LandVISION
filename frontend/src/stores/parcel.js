@@ -40,6 +40,21 @@ export const useParcelStore = defineStore('parcel', {
     async fetchParcelsGeojson(params) {
       this.parcelsGeojson = await getParcelsGeoJSON(params)
     },
+    /**
+     * v4.0.1：按视野 bbox 加载指定期次地块 GeoJSON（GiST 索引毫秒级返回，
+     * 替代海量数据下 40~60 秒的全量拉取）。
+     * bbox: [minx, miny, maxx, maxy]；periods: ['base','current']。
+     */
+    async fetchParcelsGeojsonBbox(periods, bbox) {
+      const bboxStr = bbox ? `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}` : null
+      const tasks = periods.map((p) =>
+        getParcelsGeoJSON(bboxStr ? { period: p, bbox: bboxStr } : { period: p }))
+      const fcs = await Promise.all(tasks)
+      return {
+        type: 'FeatureCollection',
+        features: fcs.flatMap((fc) => fc.features || []),
+      }
+    },
     async fetchPoisGeojson() {
       this.poisGeojson = await getPoisGeoJSON()
     },

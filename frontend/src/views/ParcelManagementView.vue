@@ -22,6 +22,7 @@
       @batch-selection="onBatchSelection"
       @save-drawing="onSaveDrawing"
       @selection-delete="onSelectionDelete"
+      @moveend="onMoveEnd"
     />
 
     <!-- v4.0：圈选删除使用提示（工具条位于地图左上角：框选/圈选/多边形） -->
@@ -55,7 +56,7 @@
     <div v-if="panelOpen === 'table'" class="page-panel panel-left glass-panel">
       <div class="panel-title">地块列表（期次显性化）</div>
       <div class="filter-row">
-        <el-checkbox-group v-model="showPeriods" size="small" @change="loadPage(1)">
+        <el-checkbox-group v-model="showPeriods" size="small" @change="onPeriodToggle">
           <el-checkbox-button label="base">基期</el-checkbox-button>
           <el-checkbox-button label="current">末期</el-checkbox-button>
           <el-checkbox-button label="none">无期次</el-checkbox-button>
@@ -514,18 +515,28 @@ function togglePanel(name) {
   panelOpen.value = panelOpen.value === name ? null : name
 }
 
-/** v4.0：按勾选期次加载地图地块（基期/末期合并显示，基期实线、末期虚线） */
-async function loadMapParcels() {
-  const tasks = []
-  if (showPeriods.value.includes('base')) tasks.push(store.fetchParcelsGeojson({ period: 'base' }))
-  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
-  if (showPeriods.value.includes('current')) tasks.push(store.fetchParcelsGeojson({ period: 'current' }))
-  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
-  const [baseFc, currentFc] = await Promise.all(tasks)
-  mapParcelsGeojson.value = {
-    type: 'FeatureCollection',
-    features: [...(baseFc.features || []), ...(currentFc.features || [])],
-  }
+/** v4.0.1：按视野 bbox 加载勾选期次地块（GiST 索引毫秒级，替代海量数据全量拉取） */
+const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
+const lastBbox = ref(null)
+let mapFetchSeq = 0
+
+async function loadMapParcels(bbox) {
+  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
+  const seq = ++mapFetchSeq
+  const fc = periods.length
+    ? await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
+    : { type: 'FeatureCollection', features: [] }
+  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+}
+
+function onMoveEnd(bbox) {
+  lastBbox.value = bbox
+  loadMapParcels(bbox)
+}
+
+function onPeriodToggle() {
+  loadPage(1)
+  loadMapParcels(lastBbox.value)
 }
 
 /** 表格期次参数：只勾选单一期次时下推后端过滤；否则不过滤 */
@@ -552,7 +563,7 @@ async function loadPage(p) {
     loading.value = false
     loadedOnce.value = true
   }
-  loadMapParcels() // 地图同步过滤（按勾选期次）
+  // v4.0.1：表格翻页不再触发全量地图拉取（地图数据由 moveend/期次开关独立驱动）
 }
 
 function onRowClick(row) {
@@ -918,7 +929,7 @@ async function doImport() {
 }
 
 async function afterImportRefresh() {
-  await loadPage(1)
+  await Promise.all([loadPage(1), loadMapParcels(lastBbox.value)])
   ElMessage.success('列表与地图已刷新')
 }
 
