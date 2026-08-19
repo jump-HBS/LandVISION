@@ -3,7 +3,7 @@
     <!-- 全屏地图：地块 + 设施 POI + 覆盖/盲区专题 -->
     <MapView
       ref="mapRef"
-      :parcels="store.parcelsGeojson"
+      :parcels="mapParcelsGeojson"
       :pois="filteredPois"
       :coverage="coverageFc"
       :buffer="sitesFc.features.length ? sitesFc : null"
@@ -12,6 +12,7 @@
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
+      @moveend="onMoveEnd"
     />
 
     <!-- 左侧：图标栏 -->
@@ -189,6 +190,23 @@ let charts = []
 const poisGeojson = ref({ type: 'FeatureCollection', features: [] })
 const coverageFc = computed(() => result.value?.parcels_geojson || { type: 'FeatureCollection', features: [] })
 
+// v4.0.1：按视野 bbox 加载地块（GiST 索引毫秒级，替代海量数据全量拉取）
+const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
+const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
+const lastBbox = ref(null)
+let mapFetchSeq = 0
+
+async function loadMapParcels(bbox) {
+  const seq = ++mapFetchSeq
+  const fc = await store.fetchParcelsGeojsonBbox(['base', 'current'], bbox || lastBbox.value || DEFAULT_BBOX)
+  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+}
+
+function onMoveEnd(bbox) {
+  lastBbox.value = bbox
+  loadMapParcels(bbox)
+}
+
 /** 地图上只显示所选类型的设施（不选 = 全部） */
 const filteredPois = computed(() => {
   const set = new Set(facilityTypes.value)
@@ -201,7 +219,7 @@ const filteredPois = computed(() => {
 
 onMounted(async () => {
   await Promise.all([
-    store.fetchParcelsGeojson(),
+    loadMapParcels(),
     loadPois(),
   ])
   // v3.0 联动：转移矩阵 → 预置设施类型（先于范围继承处理，均消费后清除）

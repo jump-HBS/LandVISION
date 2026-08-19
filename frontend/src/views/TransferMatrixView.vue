@@ -1,6 +1,6 @@
 <template>
   <div class="page-fullmap">
-    <!-- 全屏地图：地块（按期次勾选显示）+ 变化图斑 -->
+    <!-- 全屏地图：地块（按期次勾选显示，按视野 bbox 加载）+ 变化图斑 -->
     <MapView
       ref="mapRef"
       :parcels="mapParcelsGeojson"
@@ -10,6 +10,7 @@
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
+      @moveend="onMoveEnd"
     />
 
     <!-- 左侧：图标栏 -->
@@ -36,7 +37,7 @@
         title="两期地块请在「地块管理」页通过 SHP 导入（选择基期/末期）；本页不再提供重复的导入入口，点击计算即可基于已导入的基期与末期数据生成转移矩阵。" />
       <div class="flex-row mb">
         <span class="scope-hint">地图显示期次（勾选即显示）：</span>
-        <el-checkbox-group v-model="showPeriods" size="small" @change="loadMapParcels">
+        <el-checkbox-group v-model="showPeriods" size="small" @change="loadMapParcels(lastBbox)">
           <el-checkbox-button label="base">基期</el-checkbox-button>
           <el-checkbox-button label="current">末期</el-checkbox-button>
         </el-checkbox-group>
@@ -337,18 +338,23 @@ onMounted(async () => {
   await loadMapParcels()
 })
 
-/** v4.0：按勾选期次加载地图地块（基期实线 / 末期虚线，避免两期混叠） */
-async function loadMapParcels() {
-  const tasks = []
-  if (showPeriods.value.includes('base')) tasks.push(store.fetchParcelsGeojson({ period: 'base' }))
-  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
-  if (showPeriods.value.includes('current')) tasks.push(store.fetchParcelsGeojson({ period: 'current' }))
-  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
-  const [baseFc, currentFc] = await Promise.all(tasks)
-  mapParcelsGeojson.value = {
-    type: 'FeatureCollection',
-    features: [...(baseFc.features || []), ...(currentFc.features || [])],
-  }
+/** v4.0.1：按视野 bbox 加载勾选期次地块（GiST 索引毫秒级，替代海量数据全量拉取） */
+const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
+const lastBbox = ref(null)
+let mapFetchSeq = 0
+
+async function loadMapParcels(bbox) {
+  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
+  const seq = ++mapFetchSeq
+  const fc = periods.length
+    ? await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
+    : { type: 'FeatureCollection', features: [] }
+  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+}
+
+function onMoveEnd(bbox) {
+  lastBbox.value = bbox
+  loadMapParcels(bbox)
 }
 
 onBeforeUnmount(() => {
