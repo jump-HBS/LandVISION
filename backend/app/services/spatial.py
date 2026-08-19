@@ -116,7 +116,8 @@ def list_parcels(db=None, bbox: Optional[str] = None, land_use: Optional[str] = 
                 continue
             if region_code and p.get("region_code") != region_code:
                 continue
-            if period and p.get("period") != period:
+            # v4.0：期次缺省视为基期（与数据库列默认值一致），勾选「基期」即可显示
+            if period and (p.get("period") or "base") != period:
                 continue
             if q and q not in p["name"] and q not in p["parcel_code"]:
                 continue
@@ -153,8 +154,10 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
     """地块 GeoJSON FeatureCollection（地图渲染用，可按期次过滤）。"""
     if is_demo():
         features = demo_data.parcel_features()
+        # v4.0：期次缺省视为基期（与数据库列默认值一致）
         if period:
-            features = [f for f in features if f["properties"].get("period") == period]
+            features = [f for f in features
+                        if (f["properties"].get("period") or "base") == period]
         if bbox:
             features = [f for f in features if _demo_geom_in_bbox(f["geometry"], bbox)]
         return {"type": "FeatureCollection", "features": features}
@@ -301,18 +304,35 @@ def delete_parcel(parcel_id: int, db=None) -> bool:
 
 
 def batch_delete_parcels(parcel_ids: list, db=None) -> dict:
-    """批量删除地块（跳过锁定项）。"""
+    """批量删除地块（跳过锁定项）。v4.0：POSTGIS 单次 IN 查询，支撑圈选删除海量要素。"""
+    ids = list(dict.fromkeys(parcel_ids))  # 去重且保序
+    if is_demo():
+        deleted, locked, missing = [], [], []
+        for pid in ids:
+            parcel = _demo_find(demo_data.PARCELS, pid)
+            if not parcel:
+                missing.append(pid)
+                continue
+            if parcel.get("locked"):
+                locked.append({"id": pid, "name": parcel["name"]})
+                continue
+            demo_data.PARCELS.remove(parcel)
+            deleted.append(pid)
+        return {"deleted": deleted, "locked": locked, "missing": missing}
+    from ..models import Parcel
+    found = {r.id: r for r in db.query(Parcel).filter(Parcel.id.in_(ids)).all()} if ids else {}
     deleted, locked, missing = [], [], []
-    for pid in parcel_ids:
-        parcel = get_parcel(pid, db)
-        if not parcel:
+    for pid in ids:
+        r = found.get(pid)
+        if not r:
             missing.append(pid)
             continue
-        if parcel.get("locked"):
-            locked.append({"id": pid, "name": parcel["name"]})
+        if r.locked:
+            locked.append({"id": pid, "name": r.name})
             continue
-        delete_parcel(pid, db)
+        db.delete(r)
         deleted.append(pid)
+    db.commit()
     return {"deleted": deleted, "locked": locked, "missing": missing}
 
 
@@ -403,7 +423,8 @@ def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = Non
                 continue
             if bbox and not _demo_geom_in_bbox(p["geometry"], bbox):
                 continue
-            result.append({"id": p["id"], "name": p["name"], "poi_type": p["poi_type"]})
+            result.append({"id": p["id"], "name": p["name"], "poi_type": p["poi_type"],
+                           "locked": p.get("locked", False)})
         total = len(result)
         start = (page - 1) * page_size
         return paginated(result[start:start + page_size], page, page_size, total)
@@ -418,7 +439,8 @@ def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = Non
         query = query.filter(ST_Intersects(Poi.geom, ST_MakeEnvelope(minx, miny, maxx, maxy, 4326)))
     total = query.count()
     rows = query.order_by(Poi.id).offset((page - 1) * page_size).limit(page_size).all()
-    items = [{"id": r.id, "name": r.name, "poi_type": r.poi_type} for r in rows]
+    items = [{"id": r.id, "name": r.name, "poi_type": r.poi_type,
+              "locked": r.locked} for r in rows]
     return paginated(items, page, page_size, total)
 
 
@@ -438,7 +460,8 @@ def pois_geojson(db=None, bbox: Optional[str] = None) -> dict:
         query = query.filter(ST_Intersects(Poi.geom, ST_MakeEnvelope(minx, miny, maxx, maxy, 4326)))
     features = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)),
-         "properties": {"id": r.id, "name": r.name, "poi_type": r.poi_type}}
+         "properties": {"id": r.id, "name": r.name, "poi_type": r.poi_type,
+                        "locked": r.locked}}
         for r in query.all()
     ]
     return {"type": "FeatureCollection", "features": features}
@@ -466,6 +489,26 @@ def create_poi(data: dict, db=None) -> dict:
             "project_id": row.project_id, "locked": row.locked}
 
 
+def set_poi_locked(poi_id: int, locked: bool, db=None) -> Optional[dict]:
+    """v4.0：锁定 / 解锁 POI（锁定后不可删除，圈选删除自动跳过）。"""
+    if is_demo():
+        p = _demo_find(demo_data.POIS, poi_id)
+        if not p:
+            return None
+        p["locked"] = locked
+        return {"id": poi_id, "name": p["name"], "poi_type": p["poi_type"],
+                "locked": locked}
+    from ..models import Poi
+    row = db.query(Poi).filter(Poi.id == poi_id).first()
+    if not row:
+        return None
+    row.locked = locked
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name, "poi_type": row.poi_type,
+            "locked": row.locked}
+
+
 def delete_poi(poi_id: int, db=None) -> bool:
     if is_demo():
         p = _demo_find(demo_data.POIS, poi_id)
@@ -487,33 +530,34 @@ def delete_poi(poi_id: int, db=None) -> bool:
 
 
 def batch_delete_pois(poi_ids: list, db=None) -> dict:
-    """批量删除 POI（跳过锁定项）。"""
+    """批量删除 POI（跳过锁定项）。v4.0：POSTGIS 单次 IN 查询，支撑圈选删除海量点要素。"""
+    ids = list(dict.fromkeys(poi_ids))
     deleted, locked, missing = [], [], []
-    for pid in poi_ids:
-        p = None
-        if is_demo():
+    if is_demo():
+        for pid in ids:
             p = _demo_find(demo_data.POIS, pid)
-            if p:
-                if p.get("locked"):
-                    locked.append({"id": pid, "name": p["name"]})
-                    continue
-                demo_data.POIS.remove(p)
-                deleted.append(pid)
-            else:
+            if not p:
                 missing.append(pid)
-            continue
-        from ..models import Poi
-        row = db.query(Poi).filter(Poi.id == pid).first()
-        if not row:
+                continue
+            if p.get("locked"):
+                locked.append({"id": pid, "name": p["name"]})
+                continue
+            demo_data.POIS.remove(p)
+            deleted.append(pid)
+        return {"deleted": deleted, "locked": locked, "missing": missing}
+    from ..models import Poi
+    found = {r.id: r for r in db.query(Poi).filter(Poi.id.in_(ids)).all()} if ids else {}
+    for pid in ids:
+        r = found.get(pid)
+        if not r:
             missing.append(pid)
             continue
-        if row.locked:
-            locked.append({"id": pid, "name": row.name})
+        if r.locked:
+            locked.append({"id": pid, "name": r.name})
             continue
-        db.delete(row)
+        db.delete(r)
         deleted.append(pid)
-    if not is_demo():
-        db.commit()
+    db.commit()
     return {"deleted": deleted, "locked": locked, "missing": missing}
 
 
@@ -543,7 +587,8 @@ def _parcel_summary(p: dict) -> dict:
         "id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
         "land_use": p["land_use"], "district": p.get("district"),
         "region_code": p.get("region_code"),
-        "period": p.get("period"), "project_id": p.get("project_id"),
+        # v4.0：期次缺省视为基期（与数据库列默认值一致）
+        "period": p.get("period") or "base", "project_id": p.get("project_id"),
         "locked": p.get("locked", False),
         "area_sqm": p["area_sqm"], "far_limit": p["far_limit"],
         "height_limit": p["height_limit"],

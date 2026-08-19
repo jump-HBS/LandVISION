@@ -115,7 +115,8 @@ def parcel_features():
             "land_use": p["land_use"], "district": p["district"],
             "region_code": p["region_code"], "area_sqm": p["area_sqm"],
             "far_limit": p["far_limit"], "height_limit": p["height_limit"],
-            "period": p.get("period"), "project_id": p.get("project_id"),
+            # v4.0：期次缺省视为基期（与数据库列默认值一致）
+            "period": p.get("period") or "base", "project_id": p.get("project_id"),
             "locked": p.get("locked", False),
             "created_at": p["created_at"],
         }} for p in PARCELS

@@ -46,9 +46,11 @@ def delete_zone(zone_id: int, db=Depends(get_db)):
 
 @router.post("/zones/batch-delete", summary="批量删除控制线（跳过锁定项）")
 def batch_delete_zones(body: BatchIdsBody, db=Depends(get_db)):
+    # v4.0：一次加载全部控制线，避免逐条全表扫描
+    zones = {z["id"]: z for z in planning_check.list_zones(db)}
     deleted, locked, missing = [], [], []
-    for zid in body.ids:
-        zone = next((z for z in planning_check.list_zones(db) if z["id"] == zid), None)
+    for zid in dict.fromkeys(body.ids):
+        zone = zones.get(zid)
         if not zone:
             missing.append(zid)
             continue

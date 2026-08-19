@@ -1,9 +1,9 @@
 <template>
   <div class="page-fullmap">
-    <!-- 全屏地图：地块 + 变化图斑 -->
+    <!-- 全屏地图：地块（按期次勾选显示）+ 变化图斑 -->
     <MapView
       ref="mapRef"
-      :parcels="store.parcelsGeojson"
+      :parcels="mapParcelsGeojson"
       :changes="changesFc"
       :region-boundary="boundaryGeojson"
       enable-selection
@@ -30,31 +30,16 @@
       <el-alert class="mb" type="info" :closable="false"
         title="转移矩阵 = 基期（base，变化前）与末期（current，变化后）两期地块叠加求交，按地类组合统计转换面积；同时识别消失图斑（基期未保留）与新增图斑（末期新出现）。" />
 
-      <div class="section-title">② 期次地块数据</div>
+      <!-- v4.0：期次数据统一在地块管理模块导入，此处仅做显示开关与计算 -->
+      <div class="section-title">② 期次数据（在地块管理模块导入，此处直接计算）</div>
+      <el-alert class="mb" type="success" :closable="false"
+        title="两期地块请在「地块管理」页通过 SHP 导入（选择基期/末期）；本页不再提供重复的导入入口，点击计算即可基于已导入的基期与末期数据生成转移矩阵。" />
       <div class="flex-row mb">
-        <el-radio-group v-model="importPeriod" size="small">
-          <el-radio-button label="base">基期（变化前）</el-radio-button>
-          <el-radio-button label="current">末期（变化后）</el-radio-button>
-        </el-radio-group>
-      </div>
-      <div class="flex-row mb">
-        <el-upload :auto-upload="false" :limit="1" accept=".zip" :show-file-list="false"
-                   :on-change="(f) => (importFile = f.raw)">
-          <el-button size="small" type="primary">选择 SHP zip（WGS84 面要素）</el-button>
-        </el-upload>
-        <el-button size="small" :loading="importing" :disabled="!importFile" @click="doImport">
-          导入为{{ importPeriod === 'base' ? '基期' : '末期' }}
-        </el-button>
-      </div>
-      <div class="flex-row mb">
-        <span class="scope-hint">导入数据将写入分析项目：</span>
-        <el-tag v-if="ui.currentProject" size="small" type="success">{{ ui.currentProject.name }}</el-tag>
-        <el-tag v-else size="small" type="danger">未选择项目（v3.0 必选，请在顶栏项目工作台选择/创建）</el-tag>
-      </div>
-      <div class="flex-row mb">
-        <el-button size="small" type="warning" plain :loading="demoGenerating" @click="generateDemo">
-          一键生成演示基期（模拟 1 转换 + 1 消失 + 1 新增）
-        </el-button>
+        <span class="scope-hint">地图显示期次（勾选即显示）：</span>
+        <el-checkbox-group v-model="showPeriods" size="small" @change="loadMapParcels">
+          <el-checkbox-button label="base">基期</el-checkbox-button>
+          <el-checkbox-button label="current">末期</el-checkbox-button>
+        </el-checkbox-group>
       </div>
       <div class="scope-hint">期次数据状态：{{ periodStatus }}</div>
 
@@ -192,18 +177,18 @@
 
 <script setup>
 /**
- * TransferMatrixView —— 模块一：用地变化转移矩阵
- * 流程：导入基期/末期 SHP（或一键生成演示基期）→ 划定可选范围 → 计算矩阵
- *       → 矩阵表 + 面积增减图 + 变化图斑上图。
+ * TransferMatrixView —— 模块一：用地变化转移矩阵（v4.0）
+ * 流程：地块管理模块导入基期/末期数据 → 本页勾选期次显示（避免两期混叠）→ 划定可选范围
+ *       → 点击计算 → 矩阵表 + 面积增减图 + 变化图斑上图（不再提供重复的导入入口）。
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import { useRouter } from 'vue-router'
 import {
-  getRegion, importTransitionShp, generateDemoBase, transitionMatrix, parseScopeShp,
+  getRegion, transitionMatrix, parseScopeShp,
 } from '../api'
 import { LAND_USE_ORDER, LAND_USE_COLORS } from '../utils/colors'
 import MapView from '../components/MapView.vue'
@@ -259,11 +244,9 @@ const mapRef = ref(null)
 const panel = ref(null)
 const boundaryGeojson = ref(null)
 
-// 期次数据
-const importPeriod = ref('base')
-const importFile = ref(null)
-const importing = ref(false)
-const demoGenerating = ref(false)
+// v4.0：期次显示开关（数据统一在地块管理模块导入；此处只控制地图显示哪期）
+const showPeriods = ref(['base', 'current'])
+const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 
 // 分析范围
 const scopeMode = ref('none')
@@ -340,7 +323,7 @@ const changeArea = computed(() => {
 
 const periodStatus = computed(() => {
   const r = result.value
-  return r ? `基期 ${r.base_count} 宗 / 末期 ${r.current_count} 宗` : '尚未计算（导入数据后点击“计算转移矩阵”）'
+  return r ? `基期 ${r.base_count} 宗 / 末期 ${r.current_count} 宗` : '尚未计算（在地块管理模块导入两期数据后点击「计算转移矩阵」）'
 })
 
 function cellStyle(f, t) {
@@ -351,8 +334,22 @@ function cellStyle(f, t) {
 }
 
 onMounted(async () => {
-  await store.fetchParcelsGeojson()
+  await loadMapParcels()
 })
+
+/** v4.0：按勾选期次加载地图地块（基期实线 / 末期虚线，避免两期混叠） */
+async function loadMapParcels() {
+  const tasks = []
+  if (showPeriods.value.includes('base')) tasks.push(store.fetchParcelsGeojson({ period: 'base' }))
+  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
+  if (showPeriods.value.includes('current')) tasks.push(store.fetchParcelsGeojson({ period: 'current' }))
+  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
+  const [baseFc, currentFc] = await Promise.all(tasks)
+  mapParcelsGeojson.value = {
+    type: 'FeatureCollection',
+    features: [...(baseFc.features || []), ...(currentFc.features || [])],
+  }
+}
 
 onBeforeUnmount(() => {
   charts.forEach((c) => c.dispose())
@@ -416,48 +413,7 @@ async function importScopeShp() {
   }
 }
 
-// ---------- 期次数据导入 ----------
-async function doImport() {
-  if (!importFile.value) return
-  // v3.0：期次数据导入强制关联分析项目
-  if (!ui.currentProjectId) {
-    ElMessage.warning('请先在顶栏「项目工作台」选择分析项目（v3.0 起上传数据必须关联项目）')
-    return
-  }
-  importing.value = true
-  try {
-    const fd = new FormData()
-    fd.append('file', importFile.value)
-    fd.append('period', importPeriod.value)
-    fd.append('project_id', ui.currentProjectId)
-    const r = await importTransitionShp(fd)
-    ElMessage.success(`已导入 ${r.imported} 宗地块，标记为「${importPeriod.value === 'base' ? '基期' : '末期'}」，跳过 ${r.skipped.length} 条`)
-    await store.fetchParcelsGeojson()
-  } finally {
-    importing.value = false
-  }
-}
-
-async function generateDemo() {
-  try {
-    await ElMessageBox.confirm(
-      '将生成 BASE-* 演示基期地块（模拟 1 宗类型转换 + 1 宗消失 + 1 宗新增），并把现有地块标记为末期（current）。是否继续？',
-      '生成演示基期', { type: 'warning', confirmButtonText: '生成', cancelButtonText: '取消' }
-    )
-  } catch (e) {
-    return
-  }
-  demoGenerating.value = true
-  try {
-    const r = await generateDemoBase({ project_id: ui.currentProjectId || null })
-    ElMessage.success(r.message || `演示基期已生成（${r.created} 宗）`)
-    await store.fetchParcelsGeojson()
-  } finally {
-    demoGenerating.value = false
-  }
-}
-
-// ---------- 计算 ----------
+// ---------- 计算（v4.0：直接基于地块管理中已导入的基期/末期数据） ----------
 async function runMatrix() {
   running.value = true
   panel.value = 'result'

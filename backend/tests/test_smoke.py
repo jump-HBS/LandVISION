@@ -349,6 +349,24 @@ def test_pois():
     resp = client.get("/api/pois/geojson")
     assert resp.json()["type"] == "FeatureCollection"
 
+    # v4.0：POI 锁定 / 解锁 + 批量删除跳过锁定项（圈选删除的锁定保护）
+    resp = client.post("/api/pois", json={
+        "name": "锁定测试点", "poi_type": "商业",
+        "geometry": {"type": "Point", "coordinates": [114.37, 30.53]}})
+    assert resp.status_code == 201
+    pid = resp.json()["id"]
+    assert resp.json()["locked"] is False
+    resp = client.post(f"/api/pois/{pid}/lock", json={"locked": True})
+    assert resp.status_code == 200
+    assert resp.json()["locked"] is True
+    resp = client.delete(f"/api/pois/{pid}")
+    assert resp.status_code == 409  # 锁定后不可删除
+    resp = client.post("/api/pois/batch-delete", json={"ids": [pid]})
+    assert resp.json()["deleted"] == []
+    assert resp.json()["locked"][0]["id"] == pid
+    client.post(f"/api/pois/{pid}/lock", json={"locked": False})
+    client.delete(f"/api/pois/{pid}")
+
 
 def test_planning():
     resp = client.get("/api/planning/zones")

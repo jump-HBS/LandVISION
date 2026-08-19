@@ -3,23 +3,32 @@
     <!-- 全屏地图（批量选择模式 + 保存绘制） -->
     <MapView
       ref="mapRef"
-      :parcels="store.parcelsGeojson"
+      :parcels="mapParcelsGeojson"
       :pois="store.poisGeojson"
       :zones="store.zonesGeojson"
       :region-boundary="boundaryGeojson"
       :highlight-id="highlightId"
       :batch-select="batchMode"
       :show-save-drawing="true"
-      :enable-selection="boxDeleteMode"
-      :selection-delete="true"
+      enable-selection
+      selection-delete
+      selection-collect-all
       @parcel-click="onMapClick"
       @parcel-detail="onParcelDetail"
+      @poi-click="onPoiMapClick"
+      @poi-detail="onPoiDetail"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
       @batch-selection="onBatchSelection"
       @save-drawing="onSaveDrawing"
       @selection-delete="onSelectionDelete"
     />
+
+    <!-- v4.0：圈选删除使用提示（工具条位于地图左上角：框选/圈选/多边形） -->
+    <div v-if="panelOpen !== 'table'" class="map-widget-draw-hint" @click="togglePanel('table')">
+      圈选删除：点击地图左上角 <b>框选</b>/<b>圈选</b>/<b>多边形</b> 工具绘制范围，
+      自动统计范围内地块 + 兴趣点 + 控制线，点击「删除选中要素」一键清理
+    </div>
 
     <!-- 左侧：图标按钮 -->
     <button class="page-icon-btn icon-left" :class="{ active: panelOpen === 'table' }"
@@ -41,20 +50,16 @@
             title="兴趣点管理（点要素 SHP 导入/删除）" @click="togglePanel('pois')">
       <el-icon :size="18"><Place /></el-icon>
     </button>
-    <button class="page-icon-btn icon-left6" :class="{ active: boxDeleteMode }"
-            title="框选删除（地图框选/圈选地块后批量删除，跳过锁定项）" @click="toggleBoxDeleteMode">
-      <el-icon :size="18"><Delete /></el-icon>
-    </button>
 
     <!-- 左侧展开：地块列表面板 -->
     <div v-if="panelOpen === 'table'" class="page-panel panel-left glass-panel">
       <div class="panel-title">地块列表（期次显性化）</div>
       <div class="filter-row">
-        <el-radio-group v-model="period" size="small" @change="loadPage(1)">
-          <el-radio-button label="">全部</el-radio-button>
-          <el-radio-button label="base">基期</el-radio-button>
-          <el-radio-button label="current">末期</el-radio-button>
-        </el-radio-group>
+        <el-checkbox-group v-model="showPeriods" size="small" @change="loadPage(1)">
+          <el-checkbox-button label="base">基期</el-checkbox-button>
+          <el-checkbox-button label="current">末期</el-checkbox-button>
+          <el-checkbox-button label="none">无期次</el-checkbox-button>
+        </el-checkbox-group>
         <el-input v-model="query" placeholder="搜索名称/编号" clearable size="small" style="width:130px" @keyup.enter="loadPage(1)" />
         <el-select v-model="landUse" placeholder="用地类型" clearable filterable size="small" style="width:120px" @change="loadPage(1)">
           <el-option v-for="lu in LAND_USE_ORDER" :key="lu" :label="lu" :value="lu" />
@@ -63,6 +68,9 @@
         <el-button size="small" type="success" @click="openCreate">新增</el-button>
         <el-button size="small" type="danger" plain :disabled="!selectedRows.length"
                    @click="onBatchDelete">批量删{{ selectedRows.length ? `(${selectedRows.length})` : '' }}</el-button>
+      </div>
+      <div class="scope-hint">
+        勾选即显示对应期次（表格 + 地图同步，基期实线 / 末期虚线描边）；全部取消则隐藏地块图层。
       </div>
       <el-tag v-if="activeRegion" closable size="small" class="mb" @close="clearRegionFilter">
         当前行政区：{{ activeRegion.name }}（{{ activeRegion.code }}）
@@ -171,8 +179,11 @@
             <el-tag v-if="row.locked" size="small" type="danger">锁定</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" link :type="row.locked ? 'warning' : 'info'" @click="togglePoiLock(row)">
+              {{ row.locked ? '解锁' : '锁定' }}
+            </el-button>
             <el-button size="small" link type="danger" @click="onDeletePoi(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -195,6 +206,31 @@
       @goto-planning="gotoPlanning"
       @goto-transition="gotoTransition"
     />
+
+    <!-- v4.0：POI 详情对话框（地图点要素点击查看属性） -->
+    <el-dialog v-model="poiDetailVisible" title="兴趣点详情" width="420px">
+      <el-descriptions :column="1" border size="small">
+        <el-descriptions-item label="名称">{{ poiDetail.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="类型">
+          <el-tag size="small" :color="POI_COLORS[poiDetail.poi_type] || undefined" style="border:none;color:#fff">
+            {{ poiDetail.poi_type || '-' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="ID">{{ poiDetail.id }}</el-descriptions-item>
+        <el-descriptions-item label="锁定状态">
+          <el-tag v-if="poiDetail.locked" size="small" type="danger">已锁定（不可删除）</el-tag>
+          <el-tag v-else size="small" type="success">未锁定</el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="flyToPoi">地图定位</el-button>
+        <el-button :type="poiDetail.locked ? 'warning' : 'info'" @click="togglePoiLock(poiDetail)">
+          {{ poiDetail.locked ? '解除锁定' : '锁定' }}
+        </el-button>
+        <el-button type="danger" :disabled="poiDetail.locked" @click="onDeletePoi(poiDetail)">删除</el-button>
+        <el-button @click="poiDetailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新增对话框 -->
     <el-dialog v-model="dialogVisible" title="新增地块" width="520px">
@@ -359,9 +395,11 @@
 
 <script setup>
 /**
- * ParcelManagementView —— 地块管理（v2.0）
- * 期次筛选（表格+地图同步）/ 上传关联项目与期次 / 地图批量选中删除与锁定 /
- * 地图绘制持久化（标注面板 map_features）/ 详情抽屉（期次/项目/判定依据/模块跳转）。
+ * ParcelManagementView —— 地块管理（v4.0）
+ * 期次显示开关（勾选即显示：基期实线/末期虚线，表格+地图同步）/ 上传关联项目与期次 /
+ * 地图圈选删除（框选/圈选/多边形 → 范围内地块+POI+控制线一键删除，锁定跳过）/
+ * POI 点要素点击查看属性与删除 / 地图绘制持久化（标注面板 map_features）/
+ * 详情抽屉（期次/项目/判定依据/模块跳转）。
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -369,9 +407,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
-  createParcel, deleteParcel, lockParcel, batchDeleteParcels, deleteParcelsByGeometry,
+  createParcel, deleteParcel, lockParcel, batchDeleteParcels,
   batchDeletePois, batchDeleteZones,
-  importParcelsShp, importPoisShp, getPois, deletePoi,
+  importParcelsShp, importPoisShp, getPois, deletePoi, lockPoi,
   checkParcel, getRegion, getProjects,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
 } from '../api'
@@ -389,7 +427,8 @@ const boundaryGeojson = ref(null)
 const panelOpen = ref(null)
 const query = ref('')
 const landUse = ref('')
-const period = ref('')
+// v4.0：期次显示开关（勾选即显示该期次，表格 + 地图同步；全部取消 = 隐藏地块图层）
+const showPeriods = ref(['base', 'current'])
 const page = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -404,6 +443,9 @@ const form = ref({})
 const activeRegion = ref(null)
 const planningResult = ref(null)
 
+// 地图地块数据：按期次开关合并（基期 + 末期）
+const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
+
 // 分析项目（上传关联）
 const projects = ref([])
 const projectName = computed(() => {
@@ -415,8 +457,9 @@ const projectName = computed(() => {
 const batchMode = ref(false)
 const batchSelection = ref({ parcel_ids: [], poi_ids: [], zone_ids: [] })
 
-// v3.0：框选删除（地图框选/圈选后删除范围内地块，跳过锁定项）
-const boxDeleteMode = ref(false)
+// v4.0：POI 详情（地图点要素点击 → 属性对话框）
+const poiDetailVisible = ref(false)
+const poiDetail = ref({ id: null, name: '', poi_type: '', locked: false })
 
 // 地图标注
 const mapFeatures = ref([])
@@ -449,7 +492,7 @@ const poiImportResult = ref(null)
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
-    store.fetchParcelsGeojson(period.value || undefined),
+    loadMapParcels(),
     store.fetchPoisGeojson(),
     store.fetchZonesGeojson(),
     loadProjects(),
@@ -471,6 +514,27 @@ function togglePanel(name) {
   panelOpen.value = panelOpen.value === name ? null : name
 }
 
+/** v4.0：按勾选期次加载地图地块（基期/末期合并显示，基期实线、末期虚线） */
+async function loadMapParcels() {
+  const tasks = []
+  if (showPeriods.value.includes('base')) tasks.push(store.fetchParcelsGeojson({ period: 'base' }))
+  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
+  if (showPeriods.value.includes('current')) tasks.push(store.fetchParcelsGeojson({ period: 'current' }))
+  else tasks.push(Promise.resolve({ type: 'FeatureCollection', features: [] }))
+  const [baseFc, currentFc] = await Promise.all(tasks)
+  mapParcelsGeojson.value = {
+    type: 'FeatureCollection',
+    features: [...(baseFc.features || []), ...(currentFc.features || [])],
+  }
+}
+
+/** 表格期次参数：只勾选单一期次时下推后端过滤；否则不过滤 */
+function tablePeriodParam() {
+  const s = showPeriods.value
+  if (s.length === 1) return s[0]
+  return undefined
+}
+
 async function loadPage(p) {
   page.value = p || page.value
   loading.value = true
@@ -479,7 +543,7 @@ async function loadPage(p) {
       q: query.value || undefined,
       land_use: landUse.value || undefined,
       region_code: activeRegion.value?.code || undefined,
-      period: period.value || undefined,
+      period: tablePeriodParam(),
       page: page.value,
       page_size: pageSize.value,
     })
@@ -488,14 +552,14 @@ async function loadPage(p) {
     loading.value = false
     loadedOnce.value = true
   }
-  store.fetchParcelsGeojson(period.value || undefined) // 地图同步过滤
+  loadMapParcels() // 地图同步过滤（按勾选期次）
 }
 
 function onRowClick(row) {
   store.selectParcel(row)
   highlightId.value = row.id
   drawerVisible.value = true
-  const feature = store.parcelsGeojson.features.find((f) => f.properties.id === row.id)
+  const feature = mapParcelsGeojson.value.features.find((f) => f.properties.id === row.id)
   if (feature && mapRef.value) mapRef.value.flyTo(feature)
   loadPlanning(row.id)
 }
@@ -522,10 +586,27 @@ async function loadPlanning(parcelId) {
 }
 
 function flyToSelected() {
-  const feature = store.parcelsGeojson.features.find(
+  const feature = mapParcelsGeojson.value.features.find(
     (f) => f.properties.id === store.selectedParcel?.id
   )
   if (feature && mapRef.value) mapRef.value.flyTo(feature)
+}
+
+// ---------- v4.0 POI 点击查看 ----------
+function onPoiMapClick(feature) {
+  // 弹窗已在地图组件内展示（定位/查看详情按钮），这里仅同步选中态
+  poiDetail.value = { ...(feature.properties || {}), id: feature.id ?? feature.properties?.id }
+}
+
+function onPoiDetail(feature) {
+  poiDetail.value = { ...(feature.properties || {}), id: feature.id ?? feature.properties?.id }
+  poiDetailVisible.value = true
+}
+
+function flyToPoi() {
+  const feature = store.poisGeojson.features.find((f) => f.properties?.id === poiDetail.value.id)
+  if (feature && mapRef.value) mapRef.value.flyTo(feature)
+  poiDetailVisible.value = false
 }
 
 // ---------- 模块跳转（地块详情抽屉按钮） ----------
@@ -691,32 +772,40 @@ async function lockSelectedOnMap() {
   await loadPage(1)
 }
 
-// ---------- v3.0 框选删除（地图框选/圈选范围 → 删除范围内地块） ----------
-function toggleBoxDeleteMode() {
-  boxDeleteMode.value = !boxDeleteMode.value
-  if (!boxDeleteMode.value) mapRef.value?.clearSelection()
-  ElMessage.info(boxDeleteMode.value
-    ? '框选删除模式：使用地图工具（框选/圈选/多边形）划定范围，删除范围内地块（锁定项跳过）'
-    : '已退出框选删除模式')
-}
-
+// ---------- v4.0 圈选删除（框选/圈选/多边形 → 范围内地块 + POI + 控制线一键删除） ----------
 async function onSelectionDelete(selection) {
-  if (!selection?.count) { ElMessage.warning('所选范围内没有地块'); return }
+  const parcelCount = selection?.count || 0
+  const poiCount = selection?.poi_count || 0
+  const zoneCount = selection?.zone_count || 0
+  const total = parcelCount + poiCount + zoneCount
+  if (!total) { ElMessage.warning('所选范围内没有可删除的要素'); return }
   await ElMessageBox.confirm(
-    `确定删除框选范围内的 ${selection.count} 宗地块吗？（锁定地块自动跳过，此操作不可恢复）`,
-    '框选删除确认',
-    { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' }
+    `确定删除圈选范围内的 ${total} 个要素吗？（地块 ${parcelCount} / 兴趣点 ${poiCount} / 控制线 ${zoneCount}；锁定要素自动跳过，此操作不可恢复）`,
+    '圈选删除确认',
+    { type: 'error', confirmButtonText: '全部删除', cancelButtonText: '取消' }
   )
   try {
-    const result = await deleteParcelsByGeometry({ geometry: selection.geometry, mode: 'intersects' })
-    if (result.locked.length) {
-      ElMessage.warning(`${result.locked.length} 宗地块已锁定，已跳过（虚线描边标识）`)
-    }
-    ElMessage.success(`已删除 ${result.deleted.length} 宗地块`)
+    const [p, poi, z] = await Promise.all([
+      (selection.features || []).length
+        ? batchDeleteParcels((selection.features || []).map((f) => f.id ?? f.properties?.id))
+        : { deleted: [], locked: [] },
+      poiCount ? batchDeletePois(selection.poi_ids || []) : { deleted: [], locked: [] },
+      zoneCount ? batchDeleteZones(selection.zone_ids || []) : { deleted: [], locked: [] },
+    ])
+    const deletedTotal = p.deleted.length + poi.deleted.length + z.deleted.length
+    const lockedTotal = p.locked.length + poi.locked.length + z.locked.length
+    ElMessage.success(`已删除 ${deletedTotal} 个要素` +
+      (lockedTotal ? `，${lockedTotal} 个已锁定被跳过` : ''))
     mapRef.value?.clearSelection()
-    await Promise.all([loadPage(1), store.fetchParcelsGeojson(period.value || undefined)])
+    await Promise.all([
+      loadPage(1),
+      loadMapParcels(),
+      store.fetchPoisGeojson(),
+      store.fetchZonesGeojson(),
+      loadPois(),
+    ])
   } catch (e) {
-    ElMessage.error('框选删除失败：' + (e?.message || '未知原因'))
+    ElMessage.error('圈选删除失败：' + (e?.message || '未知原因'))
   }
 }
 
@@ -908,10 +997,18 @@ async function onDeletePoi(row) {
   try {
     await deletePoi(row.id)
     ElMessage.success('已删除')
+    if (poiDetail.value.id === row.id) poiDetailVisible.value = false
     await Promise.all([loadPois(), store.fetchPoisGeojson()])
   } catch (e) {
     ElMessage.warning(e?.message || '删除失败（可能已锁定）')
   }
+}
+
+async function togglePoiLock(row) {
+  await lockPoi(row.id, !row.locked)
+  ElMessage.success(row.locked ? `已解锁 ${row.name}` : `已锁定 ${row.name}（锁定后不可删除，圈选删除自动跳过）`)
+  if (poiDetail.value.id === row.id) poiDetail.value.locked = !row.locked
+  await Promise.all([loadPois(), store.fetchPoisGeojson()])
 }
 </script>
 
@@ -974,10 +1071,24 @@ async function onDeletePoi(row) {
   top: 50%;
   transform: translateY(calc(-50% + 107px));
 }
-.icon-left6 {
-  left: 10px;
-  top: 50%;
-  transform: translateY(calc(-50% + 150px));
+/* v4.0：圈选删除使用提示条（地图左上角工具条下方） */
+.map-widget-draw-hint {
+  position: absolute;
+  z-index: 6;
+  left: 14px;
+  top: 56px;
+  max-width: 300px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--lv-text-secondary);
+  background: var(--lv-surface-glass);
+  backdrop-filter: blur(8px);
+  border-radius: var(--lv-radius-sm);
+  box-shadow: var(--lv-shadow);
+  cursor: pointer;
+}
+.map-widget-draw-hint b {
+  color: var(--lv-primary);
 }
 .page-panel {
   position: absolute;
