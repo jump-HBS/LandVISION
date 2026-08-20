@@ -41,12 +41,15 @@ export const useParcelStore = defineStore('parcel', {
       this.parcelsGeojson = await getParcelsGeoJSON(params)
     },
     /**
-     * v4.0.1：按视野 bbox 加载指定期次地块 GeoJSON（GiST 索引毫秒级返回，
+     * v4.0.2：按视野 bbox 加载指定期次地块 GeoJSON（GiST 索引毫秒级返回，
      * 替代海量数据下 40~60 秒的全量拉取）。
-     * bbox: [minx, miny, maxx, maxy]；periods: ['base','current']。
+     * bbox 兼容两种形态：MapView moveend 已拼接的字符串 "minx,miny,maxx,maxy"
+     * 或数组 [minx, miny, maxx, maxy]；periods: ['base','current']。
      */
     async fetchParcelsGeojsonBbox(periods, bbox) {
-      const bboxStr = bbox ? `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}` : null
+      const bboxStr = Array.isArray(bbox)
+        ? `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`
+        : bbox || null
       const tasks = periods.map((p) =>
         getParcelsGeoJSON(bboxStr ? { period: p, bbox: bboxStr } : { period: p }))
       const fcs = await Promise.all(tasks)
