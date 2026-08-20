@@ -28,11 +28,17 @@ def is_demo() -> bool:
 
 
 def parse_bbox(bbox_str: str) -> tuple[float, float, float, float]:
-    """解析 'minx,miny,maxx,maxy' 字符串为元组，并校验合法性。"""
-    parts = [float(x) for x in bbox_str.split(",")]
+    """解析 'minx,miny,maxx,maxy' 字符串为元组，并校验合法性。
+
+    v4.0.2：数值解析失败时给出可读的 422 提示，而不是 Python 原生浮点错误。
+    """
+    parts = bbox_str.split(",")
     if len(parts) != 4:
-        raise ValueError("bbox 格式应为 minx,miny,maxx,maxy")
-    minx, miny, maxx, maxy = parts
+        raise ValueError(f"bbox 格式应为 minx,miny,maxx,maxy（收到：{bbox_str!r}）")
+    try:
+        minx, miny, maxx, maxy = (float(x) for x in parts)
+    except ValueError as exc:
+        raise ValueError(f"bbox 数值非法：{bbox_str!r}") from exc
     if minx >= maxx or miny >= maxy:
         raise ValueError("bbox 范围非法：minx<maxx 且 miny<maxy")
     return minx, miny, maxx, maxy
