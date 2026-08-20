@@ -30,6 +30,10 @@ def init_db_engine() -> bool:
         engine = create_engine(
             settings.db_url,
             pool_pre_ping=True,
+            # v4.0.3：扩大连接池，避免地图连续请求时连接池耗尽导致的假死
+            pool_size=10,
+            max_overflow=20,
+            pool_recycle=1800,
             connect_args={"connect_timeout": 3},  # 3 秒连不上立刻放弃，避免启动卡死
         )
         with engine.connect() as conn:

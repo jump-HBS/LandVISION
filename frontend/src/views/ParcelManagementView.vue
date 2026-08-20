@@ -26,9 +26,13 @@
     />
 
     <!-- v4.0：圈选删除使用提示（工具条位于地图左上角：框选/圈选/多边形） -->
-    <div v-if="panelOpen !== 'table'" class="map-widget-draw-hint" @click="togglePanel('table')">
+    <div v-if="panelOpen !== 'table' && !mapHint" class="map-widget-draw-hint" @click="togglePanel('table')">
       圈选删除：点击地图左上角 <b>框选</b>/<b>圈选</b>/<b>多边形</b> 工具绘制范围，
       自动统计范围内地块 + 兴趣点 + 控制线，点击「删除选中要素」一键清理
+    </div>
+    <!-- v4.0.3：视野要素过多 / 视野过大提示 -->
+    <div v-if="mapHint" class="map-widget-draw-hint map-hint-warn">
+      <el-icon :size="13"><WarningFilled /></el-icon>&nbsp;{{ mapHint }}
     </div>
 
     <!-- 左侧：图标按钮 -->
@@ -408,13 +412,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
-  createParcel, deleteParcel, lockParcel, batchDeleteParcels,
+  createParcel, deleteParcel, lockParcel, batchDeleteParcels, deleteParcelsByGeometry,
   batchDeletePois, batchDeleteZones,
   importParcelsShp, importPoisShp, getPois, deletePoi, lockPoi,
   checkParcel, getRegion, getProjects,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
 } from '../api'
 import { LAND_USE_COLORS, LAND_USE_ORDER, POI_COLORS } from '../utils/colors'
+import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 import ParcelInfo from '../components/ParcelInfo.vue'
 
@@ -515,24 +520,39 @@ function togglePanel(name) {
   panelOpen.value = panelOpen.value === name ? null : name
 }
 
-/** v4.0.1：按视野 bbox 加载勾选期次地块（GiST 索引毫秒级，替代海量数据全量拉取） */
+/** v4.0.3：按视野 bbox 智能加载勾选期次地块（防抖 + 缓存复用 + 面积保护 + 要素封顶） */
 const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
 const lastBbox = ref(null)
+const mapHint = ref('')   // 视野内要素过多 / 视野过大时的提示
 let mapFetchSeq = 0
 
 async function loadMapParcels(bbox) {
   const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
   const seq = ++mapFetchSeq
-  const fc = periods.length
-    ? await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
-    : { type: 'FeatureCollection', features: [] }
-  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+  if (!periods.length) {
+    mapParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
+    mapHint.value = ''
+    return
+  }
+  const fc = await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
+  if (seq !== mapFetchSeq) return  // 已有更新的请求，丢弃本次结果
+  if (fc.skipped) {
+    // 视野过大 / 请求被取消：保留当前图层，仅更新提示，不打断交互
+    mapHint.value = fc.reason === 'area'
+      ? '当前视野过大，已暂停加载地块（放大后可自动恢复）'
+      : mapHint.value
+    return
+  }
+  mapParcelsGeojson.value = fc
+  mapHint.value = fc.truncated
+    ? `视野内共 ${fc.total} 宗地块，仅显示前 ${fc.features.length} 宗（按编号截断），请放大视野查看局部详情`
+    : ''
 }
 
-function onMoveEnd(bbox) {
+const onMoveEnd = debounce((bbox) => {
   lastBbox.value = bbox
   loadMapParcels(bbox)
-}
+}, 400)
 
 function onPeriodToggle() {
   loadPage(1)
@@ -790,15 +810,17 @@ async function onSelectionDelete(selection) {
   const zoneCount = selection?.zone_count || 0
   const total = parcelCount + poiCount + zoneCount
   if (!total) { ElMessage.warning('所选范围内没有可删除的要素'); return }
+  // v4.0.3：地块删除走服务端几何查询（覆盖范围内全部地块，即使地图因要素封顶只显示了一部分）
+  const note = mapHint.value ? '（地图当前仅显示部分地块，删除将以框选几何在服务端匹配全部地块）' : ''
   await ElMessageBox.confirm(
-    `确定删除圈选范围内的 ${total} 个要素吗？（地块 ${parcelCount} / 兴趣点 ${poiCount} / 控制线 ${zoneCount}；锁定要素自动跳过，此操作不可恢复）`,
+    `确定删除圈选范围内的 ${total} 个要素吗？${note}（地块 ${parcelCount} / 兴趣点 ${poiCount} / 控制线 ${zoneCount}；锁定要素自动跳过，此操作不可恢复）`,
     '圈选删除确认',
     { type: 'error', confirmButtonText: '全部删除', cancelButtonText: '取消' }
   )
   try {
     const [p, poi, z] = await Promise.all([
-      (selection.features || []).length
-        ? batchDeleteParcels((selection.features || []).map((f) => f.id ?? f.properties?.id))
+      parcelCount
+        ? deleteParcelsByGeometry({ geometry: selection.geometry, mode: 'intersects' })
         : { deleted: [], locked: [] },
       poiCount ? batchDeletePois(selection.poi_ids || []) : { deleted: [], locked: [] },
       zoneCount ? batchDeleteZones(selection.zone_ids || []) : { deleted: [], locked: [] },
@@ -808,6 +830,7 @@ async function onSelectionDelete(selection) {
     ElMessage.success(`已删除 ${deletedTotal} 个要素` +
       (lockedTotal ? `，${lockedTotal} 个已锁定被跳过` : ''))
     mapRef.value?.clearSelection()
+    store.invalidateParcelsGeojsonCache()  // v4.0.3：清缓存，强制刷新删除后的最新数据
     await Promise.all([
       loadPage(1),
       loadMapParcels(),
@@ -916,7 +939,8 @@ async function doImport() {
     importResult.value = result
     if (result.imported > 0) {
       ElMessage.success(`导入完成：成功 ${result.imported} 条（期次：${importOpts.value.period === 'base' ? '基期' : '末期'}）`)
-      await loadPage(1)
+      store.invalidateParcelsGeojsonCache()  // v4.0.3：导入后强制地图重新加载
+      await Promise.all([loadPage(1), loadMapParcels(lastBbox.value)])
     } else {
       const firstReason = result.skipped?.[0]?.reason || '未知原因'
       ElMessage.warning(`导入未成功（0 条入库）：${firstReason}，详见下方明细`)
@@ -929,6 +953,7 @@ async function doImport() {
 }
 
 async function afterImportRefresh() {
+  store.invalidateParcelsGeojsonCache()  // v4.0.3：导入新数据后强制地图重新加载
   await Promise.all([loadPage(1), loadMapParcels(lastBbox.value)])
   ElMessage.success('列表与地图已刷新')
 }
@@ -1100,6 +1125,11 @@ async function togglePoiLock(row) {
 }
 .map-widget-draw-hint b {
   color: var(--lv-primary);
+}
+/* v4.0.3：要素过多/视野过大警示条 */
+.map-hint-warn {
+  color: #b45309;
+  background: rgba(254, 243, 199, 0.92);
 }
 .page-panel {
   position: absolute;

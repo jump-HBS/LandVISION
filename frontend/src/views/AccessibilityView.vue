@@ -159,6 +159,7 @@ import {
   getRegion, getPoisGeoJSON, accessibilityAnalyze, parseScopeShp, getFacilitySites,
 } from '../api'
 import { POI_COLORS } from '../utils/colors'
+import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 
 const POI_TYPES = Object.keys(POI_COLORS)
@@ -190,7 +191,7 @@ let charts = []
 const poisGeojson = ref({ type: 'FeatureCollection', features: [] })
 const coverageFc = computed(() => result.value?.parcels_geojson || { type: 'FeatureCollection', features: [] })
 
-// v4.0.1：按视野 bbox 加载地块（GiST 索引毫秒级，替代海量数据全量拉取）
+// v4.0.3：按视野 bbox 智能加载地块（防抖 + 缓存复用 + 面积保护 + 要素封顶）
 const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
 const lastBbox = ref(null)
@@ -199,13 +200,14 @@ let mapFetchSeq = 0
 async function loadMapParcels(bbox) {
   const seq = ++mapFetchSeq
   const fc = await store.fetchParcelsGeojsonBbox(['base', 'current'], bbox || lastBbox.value || DEFAULT_BBOX)
-  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+  if (seq !== mapFetchSeq) return
+  if (!fc.skipped) mapParcelsGeojson.value = fc
 }
 
-function onMoveEnd(bbox) {
+const onMoveEnd = debounce((bbox) => {
   lastBbox.value = bbox
   loadMapParcels(bbox)
-}
+}, 400)
 
 /** 地图上只显示所选类型的设施（不选 = 全部） */
 const filteredPois = computed(() => {
