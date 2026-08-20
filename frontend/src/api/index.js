@@ -6,7 +6,8 @@ import request from '../utils/request'
 
 // ---------- 地块 parcels ----------
 export const getParcels = (params) => request.get('/parcels', { params })
-export const getParcelsGeoJSON = (params) => request.get('/parcels/geojson', { params })
+// v4.0.3：支持透传 config（AbortController signal 取消在途请求）
+export const getParcelsGeoJSON = (params, config) => request.get('/parcels/geojson', { params, ...config })
 export const getParcel = (id) => request.get(`/parcels/${id}`)
 export const createParcel = (data) => request.post('/parcels', data)
 export const updateParcel = (id, data) => request.put(`/parcels/${id}`, data)

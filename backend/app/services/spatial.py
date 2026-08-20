@@ -157,7 +157,12 @@ def list_parcels(db=None, bbox: Optional[str] = None, land_use: Optional[str] = 
 
 def parcels_geojson(db=None, bbox: Optional[str] = None,
                     period: Optional[str] = None) -> dict:
-    """地块 GeoJSON FeatureCollection（地图渲染用，可按期次过滤）。"""
+    """地块 GeoJSON FeatureCollection（地图渲染用，可按期次过滤）。
+
+    v4.0.3：返回要素数封顶（settings.max_geojson_features），超出部分截断并
+    附 truncated/total，防止海量要素序列化拖垮后端与前端渲染。
+    """
+    cap = settings.max_geojson_features
     if is_demo():
         features = demo_data.parcel_features()
         # v4.0：期次缺省视为基期（与数据库列默认值一致）
@@ -166,7 +171,9 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
                         if (f["properties"].get("period") or "base") == period]
         if bbox:
             features = [f for f in features if _demo_geom_in_bbox(f["geometry"], bbox)]
-        return {"type": "FeatureCollection", "features": features}
+        total = len(features)
+        return {"type": "FeatureCollection", "features": features[:cap],
+                "total": total, "truncated": total > cap}
 
     from ..models import Parcel
     from geoalchemy2.functions import ST_Intersects, ST_MakeEnvelope
@@ -178,8 +185,11 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
         query = query.filter(
             ST_Intersects(Parcel.geom, ST_MakeEnvelope(minx, miny, maxx, maxy, 4326))
         )
-    features = [_parcel_feature_row(r) for r in query.all()]
-    return {"type": "FeatureCollection", "features": features}
+    total = query.count()
+    rows = query.order_by(Parcel.id).limit(cap).all()
+    features = [_parcel_feature_row(r) for r in rows]
+    return {"type": "FeatureCollection", "features": features,
+            "total": total, "truncated": total > cap}
 
 
 def get_parcel(parcel_id: int, db=None) -> Optional[dict]:

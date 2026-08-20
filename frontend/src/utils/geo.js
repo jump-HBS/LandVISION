@@ -99,3 +99,15 @@ export function featureInShape(feature, shape) {
       return false
   }
 }
+
+/** v4.0.3：防抖工具（地图 moveend 缩放/平移风暴 → 合并为一次加载） */
+export function debounce(fn, wait = 400) {
+  let timer = null
+  return function debounced(...args) {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      fn.apply(this, args)
+    }, wait)
+  }
+}

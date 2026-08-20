@@ -26,9 +26,13 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response) => response.data,
   (error) => {
+    // v4.0.3：取消的请求（地图快速缩放时中止上一批加载）不再弹错误提示
+    if (axios.isCancel(error)) return Promise.reject(error)
     const body = error.response?.data
     let message = '网络请求失败，请检查后端是否已启动'
-    if (body && typeof body === 'object') {
+    if (error.code === 'ECONNABORTED' || !error.response) {
+      message = '请求超时或后端繁忙（地图数据量大时请稍候片刻重试）'
+    } else if (body && typeof body === 'object') {
       // 后端统一错误格式 {code, message, detail}
       message = body.message || (typeof body.detail === 'string' ? body.detail : '') || message
     } else if (typeof body === 'string') {

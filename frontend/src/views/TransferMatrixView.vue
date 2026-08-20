@@ -13,6 +13,11 @@
       @moveend="onMoveEnd"
     />
 
+    <!-- v4.0.3：视野要素过多 / 视野过大提示 -->
+    <div v-if="mapHint" class="map-hint-warn">
+      <el-icon :size="13"><WarningFilled /></el-icon>&nbsp;{{ mapHint }}
+    </div>
+
     <!-- 左侧：图标栏 -->
     <button class="page-icon-btn icon-left1" :class="{ active: panel === 'setup' }" title="数据准备"
             @click="panel = panel === 'setup' ? null : 'setup'">
@@ -192,6 +197,7 @@ import {
   getRegion, transitionMatrix, parseScopeShp,
 } from '../api'
 import { LAND_USE_ORDER, LAND_USE_COLORS } from '../utils/colors'
+import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 
 const store = useParcelStore()
@@ -338,24 +344,38 @@ onMounted(async () => {
   await loadMapParcels()
 })
 
-/** v4.0.1：按视野 bbox 加载勾选期次地块（GiST 索引毫秒级，替代海量数据全量拉取） */
+/** v4.0.3：按视野 bbox 智能加载勾选期次地块（防抖 + 缓存复用 + 面积保护 + 要素封顶） */
 const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
 const lastBbox = ref(null)
+const mapHint = ref('')
 let mapFetchSeq = 0
 
 async function loadMapParcels(bbox) {
   const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
   const seq = ++mapFetchSeq
-  const fc = periods.length
-    ? await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
-    : { type: 'FeatureCollection', features: [] }
-  if (seq === mapFetchSeq) mapParcelsGeojson.value = fc
+  if (!periods.length) {
+    mapParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
+    mapHint.value = ''
+    return
+  }
+  const fc = await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
+  if (seq !== mapFetchSeq) return
+  if (fc.skipped) {
+    mapHint.value = fc.reason === 'area'
+      ? '当前视野过大，已暂停加载地块（放大后可自动恢复）'
+      : mapHint.value
+    return
+  }
+  mapParcelsGeojson.value = fc
+  mapHint.value = fc.truncated
+    ? `视野内共 ${fc.total} 宗地块，仅显示前 ${fc.features.length} 宗（按编号截断），请放大视野查看局部详情`
+    : ''
 }
 
-function onMoveEnd(bbox) {
+const onMoveEnd = debounce((bbox) => {
   lastBbox.value = bbox
   loadMapParcels(bbox)
-}
+}, 400)
 
 onBeforeUnmount(() => {
   charts.forEach((c) => c.dispose())
@@ -497,6 +517,23 @@ function fitToResult() {
   border-radius: 0;
   position: absolute;
   inset: 0;
+}
+/* v4.0.3：要素过多/视野过大警示条 */
+.map-hint-warn {
+  position: absolute;
+  z-index: 7;
+  left: 14px;
+  top: 56px;
+  max-width: 360px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #b45309;
+  background: rgba(254, 243, 199, 0.92);
+  border-radius: var(--lv-radius-sm);
+  box-shadow: var(--lv-shadow);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .page-icon-btn {
   position: absolute;

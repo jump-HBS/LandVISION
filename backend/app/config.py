@@ -46,9 +46,14 @@ class Settings(BaseSettings):
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080"
     )
-    rate_limit: int = 120          # 每 IP 每分钟最大请求数，0=关闭
-    audit_enabled: bool = True     # 操作审计日志
-    max_upload_mb: int = 20        # SHP 压缩包上传大小上限（MB）
+    rate_limit: int = 300         # 每 IP 每分钟最大请求数，0=关闭（v4.0.3 放宽，避免缩放地图误触限流）
+    audit_enabled: bool = True    # 操作审计日志
+    max_upload_mb: int = 20       # SHP 压缩包上传大小上限（MB）
+
+    # ---------- v4.0.3 海量数据可视化保护 ----------
+    # 单次 GeoJSON 返回要素上限：超过则截断（附 truncated/total），防止数万要素
+    # 序列化拖垮后端与前端渲染（地图缩放时按视野加载，超大视野直接跳过）
+    max_geojson_features: int = 2000
 
     # ---------- 演示区（武汉） ----------
     demo_center: tuple = (114.340, 30.500)  # 米→度近似换算基准
