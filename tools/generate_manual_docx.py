@@ -135,6 +135,7 @@ DESCRIPTIONS = {
     "tools/reset_pg_password.bat": "Windows 批处理：重置 PostgreSQL 用户密码为 postgres（ALTER USER 语句）。",
     "tools/generate_manual_docx.py": "本说明书生成器：遍历项目文件、注入逐文件说明、排版输出《项目说明书.docx》。",
     "tools/v3_postgis_live_test.ps1": "v3.0 POSTGIS 实测脚本（PowerShell，UTF-8 BOM）：对运行中的后端逐项断言 POI 导入校验（422/404）、上传强制项目校验（四入口）、点要素 POI 导入、框选删除（锁定跳过）、可达性/适宜性/体检持久化、驾驶舱严格范围聚合（子范围收敛为 0）、适宜性矛盾端点，并自动清理测试项目/POI/地块（无 BOM JSON 文件 + curl --data-binary）。",
+    "tools/generate_interview_docx.py": "求职辅助工具：基于简历项目经历与项目真实实现（全栈 WebGIS、万级数据性能优化、Git 版本管理）生成《面试高频题与参考回答.docx》（15 道高频题，含考察点与参考回答），输出到 C:\\Users\\jump\\Desktop\\任务交接\\。",
     "tools/assets/china_provinces.json": "中国省级行政区 GeoJSON（DataV 公开数据，含边界），build_regions.py 的输入。",
     "tools/assets/province_children/*.json": "各省下辖市县边界数据缓存（34 个，如 420000.json=湖北省）：build_regions.py 在线下载的本地缓存，避免重复请求。",
 
