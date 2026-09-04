@@ -457,12 +457,12 @@ const poiImportResult = ref(null)
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
-    loadProjectParcels(),
     store.fetchPoisGeojson(projectName.value || undefined),
     store.fetchZonesGeojson(projectName.value || undefined),
     loadMapFeatures(),
     loadPois(),
   ])
+  setTimeout(() => loadProjectParcels(), 100)
   if (route.query.highlight) {
     const id = Number(route.query.highlight)
     const p = store.parcels.find((x) => x.id === id)
@@ -473,12 +473,12 @@ onMounted(async () => {
 watch(() => [ui.currentProjectId, showPeriods.value], async () => {
   await Promise.all([
     loadPage(1),
-    loadProjectParcels(),
     store.fetchPoisGeojson(projectName.value || undefined),
     store.fetchZonesGeojson(projectName.value || undefined),
     loadMapFeatures(),
     loadPois(),
   ])
+  setTimeout(() => loadProjectParcels(), 100)
 }, { deep: true })
 
 function togglePanel(name) {

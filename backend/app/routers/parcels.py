@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """路由组：地块 parcels —— 分页列表 / 视野查询 / GeoJSON / CRUD / SHP 批量导入 / 批量删除 / 锁定 / 期次。"""
+import gzip
+import json
 from typing import Optional
 
 from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
@@ -76,9 +78,16 @@ def project_parcels_geojson(
     db=Depends(get_db),
 ):
     try:
-        return spatial.parcels_project_geojson(
+        data = spatial.parcels_project_geojson(
             db=db, project_name=project_name, periods=period,
             simplify_tolerance=simplify_tolerance,
+        )
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        compressed = gzip.compress(payload, compresslevel=6)
+        return Response(
+            content=compressed,
+            media_type="application/json",
+            headers={"Content-Encoding": "gzip"},
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
