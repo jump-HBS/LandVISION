@@ -25,7 +25,7 @@ from ..schemas import LAND_USE_TYPES
 from .. import demo_data
 from .regions import import_regions
 from .spatial import is_demo
-from .projects import get_project
+from .projects import get_project_by_name
 
 logger = logging.getLogger("landvision.shp_import")
 
@@ -38,15 +38,15 @@ class ShpImportError(Exception):
 
 
 class ProjectNotFoundError(ShpImportError):
-    """project_id 指定但项目不存在（路由层转 404）。"""
+    """project_name 指定但项目不存在（路由层转 404）。"""
 
 
-def require_project(db, project_id) -> None:
+def require_project(db, project_name) -> None:
     """v3.0：上传数据强制关联分析项目（项目缺失/不存在则拒绝）。"""
-    if not project_id:
-        raise ShpImportError("请先创建并选择分析项目（project_id 必填），避免数据写入全局数据池")
-    if not get_project(project_id, db):
-        raise ProjectNotFoundError(f"分析项目不存在：id={project_id}，请先创建项目")
+    if not project_name:
+        raise ShpImportError("请先创建并选择分析项目（project_name 必填），避免数据写入全局数据池")
+    if not get_project_by_name(project_name, db):
+        raise ProjectNotFoundError(f"分析项目不存在：{project_name}，请先创建项目")
 
 
 def _read_prj(files: dict) -> str:
@@ -237,18 +237,19 @@ def _normalize_land_use(raw: str) -> str:
 
 
 def import_parcels_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
-                            land_use_field: str = None, region_field: str = None,
-                            region_code: str = None, period: str = None,
-                            project_id: int = None) -> dict:
+                            code_field: str = None, land_use_field: str = None,
+                            period: str = None,
+                            project_name: str = None) -> dict:
     """解析 zip 并将面要素导入地块表（v3.0：强制关联项目与期次、几何类型校验）。"""
-    require_project(db, project_id)
+    require_project(db, project_name)
     if period not in ("base", "current"):
         raise ShpImportError("期次必须为 base（基期）或 current（末期）")
     parsed = parse_shp_zip(zip_bytes)
     fields = parsed["fields"]
     name_f = _pick_field(fields, ["name", "NAME", "地块名称", "XMMC", "MC"], name_field)
+    code_f = _pick_field(fields, ["parcel_code", "PARCEL_CODE", "code", "CODE",
+                                  "编号", "地块编号", "XMBH"], code_field)
     lu_f = _pick_field(fields, ["land_use", "LAND_USE", "DLMC", "地类名称", "用地性质", "YDLB"], land_use_field)
-    reg_f = _pick_field(fields, ["district", "XZQMC", "行政区", "region"], region_field)
 
     imported, skipped = 0, []
     # 批次号 = 时间戳 + 进程内自增序号，保证每次导入编号唯一（重复导入不会撞唯一约束）
@@ -269,22 +270,18 @@ def import_parcels_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
 
         props = f["properties"]
         name = str(props.get(name_f) or "").strip() if name_f else ""
+        parcel_code = str(props.get(code_f) or "").strip() if code_f else ""
         land_use = _normalize_land_use(str(props.get(lu_f) or "")) if lu_f else "其他土地"
-        district = str(props.get(reg_f) or "").strip() if reg_f else ""
 
         for idx, poly in enumerate(polys):
             suffix = f"-{idx + 1}" if len(polys) > 1 else ""
             record = {
-                "parcel_code": f"IMP-{batch}-{imported + 1:04d}",
+                "parcel_code": parcel_code or f"IMP-{batch}-{imported + 1:04d}",
                 "name": (name or f"导入地块{imported + 1}") + suffix,
                 "land_use": land_use,
-                "district": district or None,
-                "region_code": region_code or None,
                 "area_sqm": None,
-                "far_limit": None,
-                "height_limit": None,
                 "period": period or "base",
-                "project_id": project_id,
+                "project_name": project_name,
                 "geometry": poly,
             }
             try:
@@ -297,7 +294,7 @@ def import_parcels_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
                 imported, len(skipped), parsed.get("encoding"), fields)
     return {"imported": imported, "skipped": skipped, "fields": fields,
             "has_prj": parsed["has_prj"], "encoding": parsed.get("encoding"),
-            "period": period or "base", "project_id": project_id}
+            "period": period or "base", "project_name": project_name}
 
 
 def import_regions_from_zip(zip_bytes: bytes, db=None, level: str = "county",
@@ -352,10 +349,10 @@ def _normalize_poi_type(raw: str) -> str:
 
 
 def import_pois_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
-                         type_field: str = None, project_id: int = None,
+                         type_field: str = None, project_name: str = None,
                          period: str = None) -> dict:
     """解析 zip 并将点要素导入兴趣点表（v3.0：点面严格分离，POI 仅接受点要素）。"""
-    require_project(db, project_id)
+    require_project(db, project_name)
     parsed = parse_shp_zip(zip_bytes)
     fields = parsed["fields"]
     name_f = _pick_field(fields, ["name", "NAME", "MC", "名称", "XMMC"], name_field)
@@ -378,7 +375,7 @@ def import_pois_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
             create_poi({
                 "name": name or f"POI-{imported + 1}",
                 "poi_type": poi_type,
-                "project_id": project_id,
+                "project_name": project_name,
                 "period": period,
                 "geometry": geom,
             }, db)
@@ -388,4 +385,4 @@ def import_pois_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
     logger.info("POI SHP 导入完成：成功 %d 条，跳过 %d 条", imported, len(skipped))
     return {"imported": imported, "skipped": skipped, "fields": fields,
             "has_prj": parsed["has_prj"], "encoding": parsed.get("encoding"),
-            "project_id": project_id}
+            "project_name": project_name}

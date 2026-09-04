@@ -22,9 +22,9 @@ async def transition_import(
     file: UploadFile = File(..., description="SHP 压缩包（WGS84，面要素）"),
     period: str = Form(..., description="期次：base（基期）/ current（末期）"),
     name_field: Optional[str] = Form(None),
+    code_field: Optional[str] = Form(None),
     land_use_field: Optional[str] = Form(None),
-    region_code: Optional[str] = Form(None),
-    project_id: Optional[int] = Form(None, description="所属分析项目 id"),
+    project_name: Optional[str] = Form(None, description="所属分析项目名称"),
     db=Depends(get_db),
 ):
     if period not in ("base", "current"):
@@ -37,8 +37,8 @@ async def transition_import(
     try:
         return analysis.import_period_parcels(
             db, content, period=period,
-            name_field=name_field, land_use_field=land_use_field,
-            region_code=region_code, project_id=project_id,
+            name_field=name_field, code_field=code_field,
+            land_use_field=land_use_field, project_name=project_name,
         )
     except shp_import.ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

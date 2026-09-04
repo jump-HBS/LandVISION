@@ -15,4 +15,5 @@ def summary(body: DashboardSummaryRequest, db=Depends(get_db)):
     附加流程进度（模块完成状态）、问题清单与规划建议。"""
     return report_gen.collect_dashboard(
         db, project_id=body.project_id, scope=body.scope, scope_label=body.scope_label,
+        project_name=body.project_name,
     )

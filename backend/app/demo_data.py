@@ -51,9 +51,9 @@ POIS = [
     {'id': 20, 'name': '电影院', 'poi_type': '休闲', 'geometry': {'type': 'Point', 'coordinates': [114.3455, 30.5075]}},
 ]
 PLANNING_ZONES = [
-    {'id': 1, 'zone_name': '长江沿岸生态保护红线', 'zone_type': 'ecological_red_line', 'zone_level': '国家级', 'control_desc': '禁止任何开发建设活动，严格管控', 'area_sqm': 2648003.43, 'project_id': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.328, 30.482], [114.358, 30.482], [114.358, 30.49], [114.347, 30.491], [114.333, 30.4905], [114.328, 30.487], [114.328, 30.482]]]}},
-    {'id': 2, 'zone_name': '南部基本农田保护区', 'zone_type': 'permanent_basic_farmland', 'zone_level': '国家级', 'control_desc': '严禁非农化、非粮化', 'area_sqm': 1272313.97, 'project_id': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.352, 30.483], [114.364, 30.483], [114.364, 30.493], [114.352, 30.493], [114.352, 30.483]]]}},
-    {'id': 3, 'zone_name': '洪山区城镇开发边界', 'zone_type': 'urban_growth_boundary', 'zone_level': '市级', 'control_desc': '开发建设活动应在边界内进行，界外需专题论证', 'area_sqm': 10814668.66, 'project_id': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.326, 30.484], [114.36, 30.484], [114.36, 30.514], [114.326, 30.514], [114.326, 30.484]]]}},
+    {'id': 1, 'zone_name': '长江沿岸生态保护红线', 'zone_type': 'ecological_red_line', 'zone_level': '国家级', 'control_desc': '禁止任何开发建设活动，严格管控', 'area_sqm': 2648003.43, 'project_name': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.328, 30.482], [114.358, 30.482], [114.358, 30.49], [114.347, 30.491], [114.333, 30.4905], [114.328, 30.487], [114.328, 30.482]]]}},
+    {'id': 2, 'zone_name': '南部基本农田保护区', 'zone_type': 'permanent_basic_farmland', 'zone_level': '国家级', 'control_desc': '严禁非农化、非粮化', 'area_sqm': 1272313.97, 'project_name': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.352, 30.483], [114.364, 30.483], [114.364, 30.493], [114.352, 30.493], [114.352, 30.483]]]}},
+    {'id': 3, 'zone_name': '洪山区城镇开发边界', 'zone_type': 'urban_growth_boundary', 'zone_level': '市级', 'control_desc': '开发建设活动应在边界内进行，界外需专题论证', 'area_sqm': 10814668.66, 'project_name': None, 'period': None, 'locked': False, 'geometry': {'type': 'Polygon', 'coordinates': [[[114.326, 30.484], [114.36, 30.484], [114.36, 30.514], [114.326, 30.514], [114.326, 30.484]]]}},
 ]
 # ---------- v2.0 内存持久化容器（与 PostgreSQL 结果表对应） ----------
 PROJECTS = []               # 分析项目
@@ -112,11 +112,9 @@ def parcel_features():
     return [
         {"type": "Feature", "geometry": p["geometry"], "properties": {
             "id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
-            "land_use": p["land_use"], "district": p["district"],
-            "region_code": p["region_code"], "area_sqm": p["area_sqm"],
-            "far_limit": p["far_limit"], "height_limit": p["height_limit"],
+            "land_use": p["land_use"], "area_sqm": p["area_sqm"],
             # v4.0：期次缺省视为基期（与数据库列默认值一致）
-            "period": p.get("period") or "base", "project_id": p.get("project_id"),
+            "period": p.get("period") or "base", "project_name": p.get("project_name"),
             "locked": p.get("locked", False),
             "created_at": p["created_at"],
         }} for p in PARCELS
@@ -127,6 +125,7 @@ def poi_features():
     return [
         {"type": "Feature", "geometry": p["geometry"], "properties": {
             "id": p["id"], "name": p["name"], "poi_type": p["poi_type"],
+            "project_name": p.get("project_name"),
         }} for p in POIS
     ]
 
@@ -136,7 +135,7 @@ def zone_features():
         {"type": "Feature", "geometry": z["geometry"], "properties": {
             "id": z["id"], "zone_name": z["zone_name"], "zone_type": z["zone_type"],
             "zone_level": z["zone_level"], "control_desc": z["control_desc"],
-            "area_sqm": z["area_sqm"],
+            "area_sqm": z["area_sqm"], "project_name": z.get("project_name"),
         }} for z in PLANNING_ZONES
     ]
 

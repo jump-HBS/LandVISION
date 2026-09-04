@@ -64,6 +64,20 @@ def get_project(project_id: int, db=None) -> Optional[dict]:
             "updated_at": str(r.updated_at) if r.updated_at else None}
 
 
+def get_project_by_name(name: str, db=None) -> Optional[dict]:
+    """按项目名称查找项目，用于业务数据 project_name 绑定。"""
+    if not name:
+        return None
+    if is_demo():
+        p = next((x for x in demo_data.PROJECTS if x["name"] == name), None)
+        return dict(p) if p else None
+    from ..models import AnalysisProject
+    r = db.query(AnalysisProject).filter(AnalysisProject.name == name).first()
+    if not r:
+        return None
+    return get_project(r.id, db)
+
+
 def _name_exists(db, name: str, exclude_id: Optional[int] = None) -> bool:
     if is_demo():
         return any(p["name"] == name and p["id"] != exclude_id for p in demo_data.PROJECTS)

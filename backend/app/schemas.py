@@ -36,11 +36,7 @@ class ParcelBase(BaseModel):
     parcel_code: str = Field(..., min_length=1, max_length=50, description="地块编号")
     name: str = Field(..., min_length=1, max_length=100, description="地块名称")
     land_use: str = Field(..., description="用地性质（GB/T 21010-2017 一级类）")
-    district: Optional[str] = Field(None, max_length=50, description="行政区名称（如 武汉市洪山区）")
-    region_code: Optional[str] = Field(None, max_length=20, description="行政区划代码（如 420111）")
     area_sqm: Optional[float] = Field(None, ge=0, description="面积（平方米）")
-    far_limit: Optional[float] = Field(None, ge=0, description="容积率上限")
-    height_limit: Optional[float] = Field(None, ge=0, description="建筑限高（米）")
 
     @field_validator("land_use")
     @classmethod
@@ -53,7 +49,7 @@ class ParcelBase(BaseModel):
 class ParcelCreate(ParcelBase):
     geometry: Dict[str, Any] = Field(..., description="GeoJSON Polygon 几何")
     period: str = Field("base", description="期次：base（基期）/ current（末期）")
-    project_id: Optional[int] = Field(None, description="所属分析项目 id")
+    project_name: Optional[str] = Field(None, max_length=100, description="所属分析项目名称")
     locked: bool = Field(False, description="锁定（锁定后不可删除）")
 
     @field_validator("period")
@@ -67,14 +63,10 @@ class ParcelCreate(ParcelBase):
 class ParcelUpdate(BaseModel):
     name: Optional[str] = None
     land_use: Optional[str] = None
-    district: Optional[str] = None
-    region_code: Optional[str] = None
     period: Optional[str] = None
-    project_id: Optional[int] = None
+    project_name: Optional[str] = None
     locked: Optional[bool] = None
     area_sqm: Optional[float] = Field(None, ge=0)
-    far_limit: Optional[float] = Field(None, ge=0)
-    height_limit: Optional[float] = Field(None, ge=0)
     geometry: Optional[Dict[str, Any]] = None
 
     @field_validator("land_use")
@@ -100,7 +92,7 @@ class PoiBase(BaseModel):
 
 class PoiCreate(PoiBase):
     geometry: Dict[str, Any] = Field(..., description="GeoJSON Point 几何")
-    project_id: Optional[int] = Field(None, description="所属分析项目 id")
+    project_name: Optional[str] = Field(None, max_length=100, description="所属分析项目名称")
     period: Optional[str] = Field(None, description="期次（可选）")
     locked: bool = Field(False)
 
@@ -108,7 +100,7 @@ class PoiCreate(PoiBase):
 class PoiUpdate(BaseModel):
     name: Optional[str] = None
     poi_type: Optional[str] = None
-    project_id: Optional[int] = None
+    project_name: Optional[str] = None
     locked: Optional[bool] = None
     geometry: Optional[Dict[str, Any]] = None
 
@@ -163,7 +155,7 @@ class ZoneCreate(BaseModel):
     zone_type: str = Field(..., description="permanent_basic_farmland / ecological_red_line / urban_growth_boundary")
     zone_level: Optional[str] = Field(None, max_length=20, description="级别（可选）")
     control_desc: Optional[str] = Field(None, max_length=500, description="管控说明（可选）")
-    project_id: Optional[int] = Field(None, description="所属分析项目 id")
+    project_name: Optional[str] = Field(None, max_length=100, description="所属分析项目名称")
     period: Optional[str] = Field(None, description="期次（可选）")
     locked: bool = Field(False)
     geometry: Dict[str, Any] = Field(..., description="GeoJSON Polygon 几何")
@@ -213,6 +205,7 @@ class DashboardSummaryRequest(BaseModel):
     """驾驶舱统筹汇总请求：按分析项目与范围聚合各模块统计数据（优先读取持久化结果）。"""
 
     project_id: Optional[int] = Field(None, description="分析项目 id")
+    project_name: Optional[str] = Field(None, max_length=100, description="当前项目名称")
     scope: Optional[Dict[str, Any]] = Field(None, description="分析范围 GeoJSON（可选，None=项目范围/全量）")
     scope_label: Optional[str] = Field(None, max_length=100, description="范围名称")
 
@@ -246,7 +239,7 @@ class MapFeatureCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="标注名称")
     feature_type: str = Field(..., description="point / line / polygon")
     category: Optional[str] = Field(None, max_length=50, description="分类（可选）")
-    project_id: Optional[int] = Field(None, description="所属分析项目 id")
+    project_name: Optional[str] = Field(None, max_length=100, description="所属分析项目名称")
     properties: Optional[Dict[str, Any]] = Field(default_factory=dict, description="附加属性")
     geometry: Dict[str, Any] = Field(..., description="GeoJSON 几何（Point/LineString/Polygon）")
 
@@ -294,14 +287,10 @@ class ParcelOut(BaseModel):
     parcel_code: str
     name: str
     land_use: str
-    district: Optional[str] = None
-    region_code: Optional[str] = None
     period: Optional[str] = None
-    project_id: Optional[int] = None
+    project_name: Optional[str] = None
     locked: Optional[bool] = None
     area_sqm: Optional[float] = None
-    far_limit: Optional[float] = None
-    height_limit: Optional[float] = None
 
 
 class PoiOut(BaseModel):
@@ -310,4 +299,4 @@ class PoiOut(BaseModel):
     id: int
     name: str
     poi_type: str
-    project_id: Optional[int] = None
+    project_name: Optional[str] = None

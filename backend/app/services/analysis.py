@@ -18,7 +18,7 @@ from shapely.ops import unary_union
 from ..config import settings
 from .. import demo_data
 from .spatial import is_demo
-from .projects import resolve_project_scope
+from .projects import get_project, resolve_project_scope
 
 # ---------------------------------------------------------------------------
 # 通用
@@ -33,14 +33,25 @@ def _area_m2(geom) -> float:
     return abs(geom.area) * lon_scale * lat_scale
 
 
-def _load_parcels(db, period: Optional[str] = None) -> list:
+def _project_name(db, project_id: Optional[int]) -> Optional[str]:
+    if not project_id:
+        return None
+    project = get_project(project_id, db)
+    return project["name"] if project else None
+
+
+def _load_parcels(db, period: Optional[str] = None,
+                  project_name: Optional[str] = None) -> list:
     """加载地块（含 shapely 几何）。period=None 时返回全部。"""
     if is_demo():
         src = demo_data.PARCELS
+        if project_name:
+            src = [p for p in src
+                   if not p.get("project_name") or p.get("project_name") == project_name]
         return [
             {"id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
              "land_use": p["land_use"], "area_sqm": p.get("area_sqm"),
-             "period": p.get("period"), "project_id": p.get("project_id"),
+             "period": p.get("period"), "project_name": p.get("project_name"),
              "locked": p.get("locked", False),
              "geom": shape(p["geometry"])}
             for p in src if period is None or p.get("period") == period
@@ -48,40 +59,56 @@ def _load_parcels(db, period: Optional[str] = None) -> list:
     from ..models import Parcel
     from geoalchemy2.shape import to_shape
     query = db.query(Parcel)
+    if project_name:
+        query = query.filter(Parcel.project_name == project_name)
     if period:
         query = query.filter(Parcel.period == period)
     return [
         {"id": r.id, "parcel_code": r.parcel_code, "name": r.name,
          "land_use": r.land_use, "area_sqm": float(r.area_sqm) if r.area_sqm else None,
-         "period": r.period, "project_id": r.project_id, "locked": r.locked,
+         "period": r.period, "project_name": r.project_name, "locked": r.locked,
          "geom": to_shape(r.geom)}
         for r in query.all()
     ]
 
 
-def _load_pois(db) -> list:
+def _load_pois(db, project_name: Optional[str] = None) -> list:
     """加载 POI（含坐标）。"""
     if is_demo():
+        src = demo_data.POIS
+        if project_name:
+            src = [p for p in src
+                   if not p.get("project_name") or p.get("project_name") == project_name]
         return [{"name": p["name"], "poi_type": p["poi_type"],
-                 "point": Point(p["geometry"]["coordinates"])} for p in demo_data.POIS]
+                 "point": Point(p["geometry"]["coordinates"])} for p in src]
     from ..models import Poi
     from geoalchemy2.shape import to_shape
+    query = db.query(Poi)
+    if project_name:
+        query = query.filter(Poi.project_name == project_name)
     return [
         {"name": r.name, "poi_type": r.poi_type, "point": to_shape(r.geom)}
-        for r in db.query(Poi).all()
+        for r in query.all()
     ]
 
 
-def _load_zones(db) -> list:
+def _load_zones(db, project_name: Optional[str] = None) -> list:
     """加载三区三线控制线（含 shapely 几何）。"""
     if is_demo():
+        src = demo_data.PLANNING_ZONES
+        if project_name:
+            src = [z for z in src
+                   if not z.get("project_name") or z.get("project_name") == project_name]
         return [{"zone_name": z["zone_name"], "zone_type": z["zone_type"],
-                 "geom": shape(z["geometry"])} for z in demo_data.PLANNING_ZONES]
+                 "geom": shape(z["geometry"])} for z in src]
     from ..models import PlanningZone
     from geoalchemy2.shape import to_shape
+    query = db.query(PlanningZone)
+    if project_name:
+        query = query.filter(PlanningZone.project_name == project_name)
     return [
         {"zone_name": r.zone_name, "zone_type": r.zone_type, "geom": to_shape(r.geom)}
-        for r in db.query(PlanningZone).all()
+        for r in query.all()
     ]
 
 
@@ -259,9 +286,10 @@ def transition_matrix(db, scope: Optional[dict] = None,
                       project_id: Optional[int] = None) -> dict:
     """两期用地叠加 → 转移矩阵 + 变化图斑（结果按项目持久化）。"""
     scope, _ = resolve_project_scope(db, project_id, scope)
+    project_name = _project_name(db, project_id)
     scope_g = _scope_geom(scope)
-    base = _load_parcels(db, "base")
-    current = _load_parcels(db, "current")
+    base = _load_parcels(db, "base", project_name)
+    current = _load_parcels(db, "current", project_name)
     if scope_g:
         base = [p for p in base if p["geom"].intersects(scope_g)]
         current = [p for p in current if p["geom"].intersects(scope_g)]
@@ -353,20 +381,23 @@ def transition_matrix(db, scope: Optional[dict] = None,
 
 def import_period_parcels(db, zip_bytes: bytes, period: str,
                           name_field: str = None, land_use_field: str = None,
-                          region_code: str = None, project_id: int = None) -> dict:
+                          code_field: str = None, project_name: str = None) -> dict:
     """导入某期次地块 SHP（v3.0：期次与项目在导入时直接落库，不再事后回写）。"""
     from .shp_import import import_parcels_from_zip
     return import_parcels_from_zip(
-        zip_bytes, db, name_field=name_field, land_use_field=land_use_field,
-        region_field=None, region_code=region_code,
-        period=period, project_id=project_id,
+        zip_bytes, db, name_field=name_field, code_field=code_field,
+        land_use_field=land_use_field,
+        period=period, project_name=project_name,
     )
 
 
-def generate_demo_base(db, project_id: int = None) -> dict:
+def generate_demo_base(db, project_id: int = None,
+                       project_name: Optional[str] = None) -> dict:
     """一键生成演示基期数据：以现有未标记期次（period=None）的地块为末期，
     复制为基期并模拟三处变化。只处理未标记期次的地块：重复调用直接返回。"""
-    current = [p for p in _load_parcels(db, None) if p.get("period") is None]
+    if project_id and not project_name:
+        project_name = _project_name(db, project_id)
+    current = [p for p in _load_parcels(db, None, project_name) if p.get("period") is None]
     if not current:
         return {"created": 0, "message": "所有地块均已标记期次，无需重复生成演示基期"}
 
@@ -386,9 +417,8 @@ def generate_demo_base(db, project_id: int = None) -> dict:
             "parcel_code": f"BASE-{p['parcel_code']}",
             "name": f"{p['name']}（基期）",
             "land_use": land_use,
-            "district": None, "region_code": None,
-            "area_sqm": None, "far_limit": None, "height_limit": None,
-            "period": "base", "project_id": project_id,
+            "area_sqm": None,
+            "period": "base", "project_name": project_name,
             "geometry": _to_geojson(geom),
         })
         created += 1
@@ -396,12 +426,14 @@ def generate_demo_base(db, project_id: int = None) -> dict:
         for p in demo_data.PARCELS:
             if p.get("period") is None:
                 p["period"] = "current"
-                if project_id:
-                    p["project_id"] = project_id
+                if project_name:
+                    p["project_name"] = project_name
     else:
         from ..models import Parcel
-        db.query(Parcel).filter(Parcel.period.is_(None)).update(
-            {"period": "current", **({"project_id": project_id} if project_id else {})})
+        update_values = {"period": "current"}
+        if project_name:
+            update_values["project_name"] = project_name
+        db.query(Parcel).filter(Parcel.period.is_(None)).update(update_values)
         db.commit()
     return {"created": created, "message": f"演示基期已生成（{created} 宗），现有地块已标记为末期"}
 
@@ -448,13 +480,14 @@ def suitability_evaluate(db, target: str, weights: dict, scope: dict,
     """格网法多因子加权叠加评价（三区三线刚性约束 + 结果持久化）。"""
     from shapely.geometry import mapping
     scope, _ = resolve_project_scope(db, project_id, scope)
+    project_name = _project_name(db, project_id)
     scope_g = _scope_geom(scope)
     if scope_g is None:
         raise ValueError("请提供评价范围")
 
-    pois = _load_pois(db)
-    zones = _load_zones(db)
-    parcels = _load_parcels(db, None)
+    pois = _load_pois(db, project_name)
+    zones = _load_zones(db, project_name)
+    parcels = _load_parcels(db, None, project_name)
     traffic = [p["point"] for p in pois if p["poi_type"] == "交通"]
     services = [p["point"] for p in pois if p["poi_type"] in ("教育", "医疗", "休闲", "商业")]
     water = [p["point"] for p in pois if p["poi_type"] in ("休闲",)]  # 演示：以休闲设施近似水源
@@ -580,12 +613,15 @@ def _insert_grids(db, project_id: int, records: list):
 
 def accessibility_analyze(db, facility_types: list, radius_m: float,
                           scope: Optional[dict] = None,
-                          project_id: Optional[int] = None) -> dict:
+                          project_id: Optional[int] = None,
+                          project_name: Optional[str] = None) -> dict:
     """地块到设施的可达性分析：覆盖判定 + 盲区清单（结果持久化）。"""
     scope, _ = resolve_project_scope(db, project_id, scope)
+    if not project_name and project_id:
+        project_name = _project_name(db, project_id)
     scope_g = _scope_geom(scope)
-    parcels = _load_parcels(db, None)
-    pois = _load_pois(db)
+    parcels = _load_parcels(db, None, project_name)
+    pois = _load_pois(db, project_name)
     if scope_g:
         parcels = [p for p in parcels if p["geom"].intersects(scope_g)]
     type_set = set(facility_types)

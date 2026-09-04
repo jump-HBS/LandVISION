@@ -40,14 +40,10 @@ class Parcel(Base):
     parcel_code = Column(String(50), unique=True, nullable=False)
     name = Column(String(100), nullable=False)
     land_use = Column(String(50), nullable=False)   # GB/T 21010-2017 一级类（12 大类）
-    district = Column(String(50))                   # 行政区名称（如 武汉市洪山区）
-    region_code = Column(String(20))                # 行政区划代码（如 420111）
     period = Column(String(10), nullable=False, default="base", server_default="base")  # base/current
-    project_id = Column(Integer, ForeignKey("analysis_projects.id", ondelete="SET NULL"))
+    project_name = Column(String(100), nullable=True, index=True)  # 所属分析项目名称
     locked = Column(Boolean, nullable=False, default=False, server_default="false")
     area_sqm = Column(Numeric(14, 2))
-    far_limit = Column(Numeric(6, 2))
-    height_limit = Column(Numeric(6, 2))
     geom = Column(Geometry("POLYGON", srid=4326), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -60,7 +56,7 @@ class Poi(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     poi_type = Column(String(50), nullable=False)
-    project_id = Column(Integer, ForeignKey("analysis_projects.id", ondelete="SET NULL"))
+    project_name = Column(String(100), nullable=True, index=True)  # 所属分析项目名称
     period = Column(String(10))
     locked = Column(Boolean, nullable=False, default=False, server_default="false")
     geom = Column(Geometry("POINT", srid=4326), nullable=False)
@@ -77,7 +73,7 @@ class PlanningZone(Base):
     zone_type = Column(String(50), nullable=False)
     zone_level = Column(String(20))
     control_desc = Column(Text)
-    project_id = Column(Integer, ForeignKey("analysis_projects.id", ondelete="SET NULL"))
+    project_name = Column(String(100), nullable=True, index=True)  # 所属分析项目名称
     period = Column(String(10))
     locked = Column(Boolean, nullable=False, default=False, server_default="false")
     geom = Column(Geometry("POLYGON", srid=4326), nullable=False)
@@ -166,7 +162,7 @@ class MapFeature(Base):
     __tablename__ = "map_features"
 
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey("analysis_projects.id", ondelete="SET NULL"))
+    project_name = Column(String(100), nullable=True, index=True)  # 所属分析项目名称
     name = Column(String(100), nullable=False)
     feature_type = Column(String(20), nullable=False)   # point / line / polygon
     category = Column(String(50))

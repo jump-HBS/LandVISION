@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
                      UploadFile)
+from fastapi.responses import Response
 
 from ..config import settings
 from ..database import get_db
@@ -18,8 +19,7 @@ router = APIRouter(prefix="/parcels", tags=["地块管理"])
 def list_parcels(
     bbox: Optional[str] = Query(None, description="视野范围 minx,miny,maxx,maxy"),
     land_use: Optional[str] = Query(None, description="按用地性质过滤（12 大类）"),
-    district: Optional[str] = Query(None, description="按行政区名称过滤"),
-    region_code: Optional[str] = Query(None, description="按行政区划代码过滤（如 420111）"),
+    project_name: Optional[str] = Query(None, description="按项目名称过滤"),
     period: Optional[str] = Query(None, description="期次过滤：base（基期）/ current（末期）"),
     q: Optional[str] = Query(None, description="按名称/编号模糊搜索"),
     page: int = Query(1, ge=1),
@@ -28,8 +28,8 @@ def list_parcels(
 ):
     try:
         return spatial.list_parcels(
-            db, bbox=bbox, land_use=land_use, q=q, district=district,
-            region_code=region_code, period=period, page=page, page_size=page_size,
+            db, bbox=bbox, land_use=land_use, q=q, project_name=project_name,
+            period=period, page=page, page_size=page_size,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -39,12 +39,33 @@ def list_parcels(
 def parcels_geojson(
     bbox: Optional[str] = Query(None, description="视野范围 minx,miny,maxx,maxy"),
     period: Optional[str] = Query(None, description="期次过滤：base（基期）/ current（末期）"),
+    project_name: Optional[str] = Query(None, description="按项目名称过滤"),
     db=Depends(get_db),
 ):
     try:
-        return spatial.parcels_geojson(db, bbox=bbox, period=period)
+        return spatial.parcels_geojson(db, bbox=bbox, period=period,
+                                       project_name=project_name)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/tiles/{z}/{x}/{y}", summary="地块矢量瓦片（MapLibre vector source）")
+def parcels_tiles(
+    z: int,
+    x: int,
+    y: int,
+    project_name: Optional[str] = Query(None, description="按项目名称过滤"),
+    period: Optional[str] = Query(None, description="期次，多个用逗号分隔"),
+    db=Depends(get_db),
+):
+    data = spatial.parcels_mvt(
+        z, x, y, db=db, project_name=project_name, periods=period,
+    )
+    return Response(
+        content=data,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @router.get("/{parcel_id}", summary="地块详情")
@@ -118,11 +139,10 @@ def batch_set_period(period: str = Query(..., description="base / current"),
 async def import_shp(
     file: UploadFile = File(..., description="SHP 压缩包（WGS84/EPSG:4326）"),
     name_field: Optional[str] = Form(None, description="名称字段（可自动识别）"),
+    code_field: Optional[str] = Form(None, description="编号字段（可自动识别）"),
     land_use_field: Optional[str] = Form(None, description="用地性质字段（可自动识别）"),
-    region_field: Optional[str] = Form(None, description="行政区名称字段（可自动识别）"),
-    region_code: Optional[str] = Form(None, description="行政区划代码（如 420111）"),
     period: Optional[str] = Form("base", description="期次：base（基期）/ current（末期）"),
-    project_id: Optional[int] = Form(None, description="所属分析项目 id"),
+    project_name: Optional[str] = Form(None, description="所属分析项目名称"),
     db=Depends(get_db),
 ):
     if not (file.filename or "").lower().endswith(".zip"):
@@ -133,9 +153,9 @@ async def import_shp(
                             detail=f"压缩包超过 {settings.max_upload_mb}MB 上限")
     try:
         return shp_import.import_parcels_from_zip(
-            content, db, name_field=name_field, land_use_field=land_use_field,
-            region_field=region_field, region_code=region_code,
-            period=period, project_id=project_id,
+            content, db, name_field=name_field, code_field=code_field,
+            land_use_field=land_use_field, period=period,
+            project_name=project_name,
         )
     except shp_import.ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

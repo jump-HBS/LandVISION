@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # ---------- 应用 ----------
     app_name: str = "LandVISION API"
-    app_version: str = "1.2.0"
+    app_version: str = "5.0.0"
     description: str = "国土空间数据管理与智能分析可视化平台 —— 后端服务"
 
     # ---------- 数据库 ----------
