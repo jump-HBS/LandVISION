@@ -310,6 +310,7 @@ async function loadSummary() {
   try {
     summary.value = await dashboardSummary({
       project_id: ui.currentProjectId || null,
+      project_name: ui.currentProject?.name || null,
       scope: null,
       scope_label: null,
     })

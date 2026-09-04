@@ -18,7 +18,7 @@ export const batchDeleteParcels = (ids) => request.post('/parcels/batch-delete',
 export const deleteParcelsByGeometry = (data) => request.post('/parcels/delete-by-geometry', data)
 export const batchSetParcelPeriod = (period, ids) =>
   request.post('/parcels/batch-set-period', null, { params: { period, ids: ids?.join(',') } })
-// SHP 批量导入（multipart：file + period + project_id + 字段）
+// SHP 批量导入（multipart：file + period + project_name + 字段）
 export const importParcelsShp = (formData) =>
   request.post('/parcels/import-shp', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -44,7 +44,7 @@ export const createPoi = (data) => request.post('/pois', data)
 export const deletePoi = (id) => request.delete(`/pois/${id}`)
 export const lockPoi = (id, locked) => request.post(`/pois/${id}/lock`, { locked })
 export const batchDeletePois = (ids) => request.post('/pois/batch-delete', { ids })
-// SHP 点要素导入（multipart：file + period + project_id + 字段；v3.0 点面分离）
+// SHP 点要素导入（multipart：file + period + project_name + 字段；v3.0 点面分离）
 export const importPoisShp = (formData) =>
   request.post('/pois/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -59,8 +59,8 @@ export const updateProject = (id, data) => request.put(`/projects/${id}`, data)
 export const deleteProject = (id) => request.delete(`/projects/${id}`)
 
 // ---------- 三区三线体检 planning（模块四） ----------
-export const getZones = () => request.get('/planning/zones')
-export const getZonesGeoJSON = () => request.get('/planning/zones/geojson')
+export const getZones = (params) => request.get('/planning/zones', { params })
+export const getZonesGeoJSON = (params) => request.get('/planning/zones/geojson', { params })
 export const checkParcel = (id) => request.get(`/planning/check/${id}`)
 export const checkGeometry = (data) => request.post('/planning/check', data)
 export const createZone = (data) => request.post('/planning/zones', data)

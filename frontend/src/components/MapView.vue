@@ -157,6 +157,7 @@ import RegionSelector from './RegionSelector.vue'
 
 const props = defineProps({
   parcels: { type: Object, default: () => ({ type: 'FeatureCollection', features: [] }) },
+  parcelsTileUrl: { type: String, default: '' },
   pois: { type: Object, default: () => ({ type: 'FeatureCollection', features: [] }) },
   zones: { type: Object, default: () => ({ type: 'FeatureCollection', features: [] }) },
   changes: { type: Object, default: () => ({ type: 'FeatureCollection', features: [] }) },
@@ -203,6 +204,7 @@ const mapContainer = ref(null)
 let map = null
 let fitted = false
 let hoveredFeatureId = null
+const parcelsSourceId = ref('parcels-source')
 
 const coord = ref({ lng: props.center[0], lat: props.center[1] })
 const zoom = ref(props.zoom)
@@ -372,7 +374,7 @@ const LAYER_PAINTS = {
 }
 
 function ensureAllLayers() {
-  ensureLayer('parcels', props.parcels)
+  ensureLayer('parcels', props.parcelsTileUrl ? null : props.parcels, props.parcelsTileUrl)
   ensureLayer('pois', props.pois)
   ensureLayer('zones', props.zones)
   ensureLayer('changes', props.changes)
@@ -386,9 +388,27 @@ function ensureAllLayers() {
   applyVisibility()
 }
 
-function ensureLayer(key, geojson) {
+function ensureLayer(key, geojson, tileUrl = '') {
   if (!map) return
+  if (key === 'parcels' && tileUrl) {
+    const src = 'parcels-vt-source'
+    parcelsSourceId.value = src
+    if (!map.getSource(src)) {
+      map.addSource(src, {
+        type: 'vector',
+        tiles: [tileUrl],
+        promoteId: 'id',
+        minzoom: 0,
+        maxzoom: 22,
+      })
+      addLayer('parcels', src)
+    } else {
+      map.getSource(src).setTiles([tileUrl])
+    }
+    return
+  }
   const src = `${key}-source`
+  if (key === 'parcels') parcelsSourceId.value = src
   if (key === 'satellite') {
     if (!map.getSource(src)) {
       map.addSource(src, {
@@ -510,10 +530,10 @@ function onParcelHover(e) {
   if (!e.features?.length) return
   const id = e.features[0].id
   if (hoveredFeatureId !== null && hoveredFeatureId !== id) {
-    map.setFeatureState({ source: 'parcels-source', id: hoveredFeatureId }, { hover: false })
+    map.setFeatureState({ source: parcelsSourceId.value, id: hoveredFeatureId }, { hover: false })
   }
   if (hoveredFeatureId !== id) {
-    map.setFeatureState({ source: 'parcels-source', id }, { hover: true })
+    map.setFeatureState({ source: parcelsSourceId.value, id }, { hover: true })
     hoveredFeatureId = id
   }
   map.getCanvas().style.cursor = 'pointer'
@@ -521,7 +541,7 @@ function onParcelHover(e) {
 
 function onParcelHoverOut() {
   if (hoveredFeatureId !== null) {
-    map.setFeatureState({ source: 'parcels-source', id: hoveredFeatureId }, { hover: false })
+    map.setFeatureState({ source: parcelsSourceId.value, id: hoveredFeatureId }, { hover: false })
     hoveredFeatureId = null
   }
   map.getCanvas().style.cursor = ''
@@ -701,7 +721,7 @@ function highlight(id) {
   if (map.getLayer(hl)) map.removeLayer(hl)
   if (id !== null && id !== undefined) {
     map.addLayer({
-      id: hl, type: 'line', source: 'parcels-source',
+      id: hl, type: 'line', source: parcelsSourceId.value,
       filter: ['==', ['get', 'id'], Number(id)],
       paint: { 'line-color': '#facc15', 'line-width': 4 },
     })
@@ -812,9 +832,16 @@ function finishLineTool() {
   setTool(null)
 }
 
+function visibleParcelFeatures() {
+  if (props.parcelsTileUrl && map) {
+    return map.queryRenderedFeatures({ layers: ['parcels-fill'] })
+  }
+  return props.parcels.features || []
+}
+
 function applySelection(shape, shapeGeojson) {
   if (!props.enableSelection) return
-  const features = (props.parcels.features || []).filter((f) => featureInShape(f, shape))
+  const features = visibleParcelFeatures().filter((f) => featureInShape(f, shape))
   const byLandUse = {}
   let areaSqm = 0
   features.forEach((f) => {
@@ -943,6 +970,13 @@ defineExpose({
 
 function watchAll() {
   watch(() => props.parcels, (v) => ensureLayer('parcels', v))
+  watch(() => props.parcelsTileUrl, (url) => {
+    if (url) {
+      ensureLayer('parcels', null, url)
+    } else {
+      ensureLayer('parcels', props.parcels)
+    }
+  })
   watch(() => props.pois, (v) => ensureLayer('pois', v))
   watch(() => props.zones, (v) => ensureLayer('zones', v))
   watch(() => props.changes, (v) => ensureLayer('changes', v))

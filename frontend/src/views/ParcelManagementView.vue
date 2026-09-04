@@ -3,7 +3,7 @@
     <!-- 全屏地图（批量选择模式 + 保存绘制） -->
     <MapView
       ref="mapRef"
-      :parcels="mapParcelsGeojson"
+      :parcels-tile-url="parcelsTileUrl"
       :pois="store.poisGeojson"
       :zones="store.zonesGeojson"
       :region-boundary="boundaryGeojson"
@@ -22,17 +22,12 @@
       @batch-selection="onBatchSelection"
       @save-drawing="onSaveDrawing"
       @selection-delete="onSelectionDelete"
-      @moveend="onMoveEnd"
     />
 
     <!-- v4.0：圈选删除使用提示（工具条位于地图左上角：框选/圈选/多边形） -->
-    <div v-if="panelOpen !== 'table' && !mapHint" class="map-widget-draw-hint" @click="togglePanel('table')">
+    <div v-if="panelOpen !== 'table'" class="map-widget-draw-hint" @click="togglePanel('table')">
       圈选删除：点击地图左上角 <b>框选</b>/<b>圈选</b>/<b>多边形</b> 工具绘制范围，
       自动统计范围内地块 + 兴趣点 + 控制线，点击「删除选中要素」一键清理
-    </div>
-    <!-- v4.0.3：视野要素过多 / 视野过大提示 -->
-    <div v-if="mapHint" class="map-widget-draw-hint map-hint-warn">
-      <el-icon :size="13"><WarningFilled /></el-icon>&nbsp;{{ mapHint }}
     </div>
 
     <!-- 左侧：图标按钮 -->
@@ -77,10 +72,6 @@
       <div class="scope-hint">
         勾选即显示对应期次（表格 + 地图同步，基期实线 / 末期虚线描边）；全部取消则隐藏地块图层。
       </div>
-      <el-tag v-if="activeRegion" closable size="small" class="mb" @close="clearRegionFilter">
-        当前行政区：{{ activeRegion.name }}（{{ activeRegion.code }}）
-      </el-tag>
-
       <el-skeleton v-if="loading && !loadedOnce" :rows="8" animated />
       <template v-else>
         <el-empty v-if="!store.parcels.length && !loading" description="暂无地块数据">
@@ -253,20 +244,7 @@
             <el-radio-button label="current">末期</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="所属项目">
-          <el-select v-model="form.project_id" clearable style="width:100%" placeholder="选择分析项目（可选）">
-            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="行政区名称">
-          <el-input v-model="form.district" placeholder="如 武汉市洪山区" />
-        </el-form-item>
-        <el-form-item label="区划代码">
-          <el-input v-model="form.region_code" placeholder="如 420111" />
-        </el-form-item>
         <el-form-item label="面积(㎡)"><el-input-number v-model="form.area_sqm" :min="0" style="width:100%" /></el-form-item>
-        <el-form-item label="容积率"><el-input-number v-model="form.far_limit" :min="0" :step="0.1" style="width:100%" /></el-form-item>
-        <el-form-item label="限高(m)"><el-input-number v-model="form.height_limit" :min="0" style="width:100%" /></el-form-item>
         <el-form-item label="几何(GeoJSON)">
           <el-input v-model="form.geometryText" type="textarea" :rows="4" placeholder="Polygon GeoJSON，可点击下方按钮自动生成" />
         </el-form-item>
@@ -294,15 +272,9 @@
             <el-radio-button label="current">末期</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="所属项目（必选）">
-          <el-select v-model="importOpts.project_id" style="width:100%" placeholder="选择分析项目（必选，无项目请先在顶栏创建）">
-            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="名称字段"><el-input v-model="importOpts.name_field" placeholder="自动识别（如 XMMC/MC/name）" /></el-form-item>
+        <el-form-item label="编号字段"><el-input v-model="importOpts.code_field" placeholder="自动识别（如 code/编号/XMBH）" /></el-form-item>
         <el-form-item label="用地类型字段"><el-input v-model="importOpts.land_use_field" placeholder="自动识别（如 DLMC/地类名称）" /></el-form-item>
-        <el-form-item label="行政区字段"><el-input v-model="importOpts.region_field" placeholder="自动识别（如 XZQMC）" /></el-form-item>
-        <el-form-item label="区划代码"><el-input v-model="importOpts.region_code" placeholder="如 420111（可选）" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
@@ -345,11 +317,6 @@
             <el-radio-button label="base">基期</el-radio-button>
             <el-radio-button label="current">末期</el-radio-button>
           </el-radio-group>
-        </el-form-item>
-        <el-form-item label="所属项目（必选）">
-          <el-select v-model="poiImportOpts.project_id" style="width:100%" placeholder="选择分析项目（必选，无项目请先在顶栏创建）">
-            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
         </el-form-item>
         <el-form-item label="名称字段"><el-input v-model="poiImportOpts.name_field" placeholder="自动识别（如 NAME/name）" /></el-form-item>
         <el-form-item label="类型字段"><el-input v-model="poiImportOpts.type_field" placeholder="自动识别（如 TYPE/类型）" /></el-form-item>
@@ -415,11 +382,10 @@ import {
   createParcel, deleteParcel, lockParcel, batchDeleteParcels, deleteParcelsByGeometry,
   batchDeletePois, batchDeleteZones,
   importParcelsShp, importPoisShp, getPois, deletePoi, lockPoi,
-  checkParcel, getRegion, getProjects,
+  checkParcel, getRegion,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
 } from '../api'
 import { LAND_USE_COLORS, LAND_USE_ORDER, POI_COLORS } from '../utils/colors'
-import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 import ParcelInfo from '../components/ParcelInfo.vue'
 
@@ -446,17 +412,15 @@ const dialogVisible = ref(false)
 const submitting = ref(false)
 const selectedRows = ref([])
 const form = ref({})
-const activeRegion = ref(null)
 const planningResult = ref(null)
 
-// 地图地块数据：按期次开关合并（基期 + 末期）
-const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
-
-// 分析项目（上传关联）
-const projects = ref([])
-const projectName = computed(() => {
-  const p = projects.value.find((x) => x.id === store.selectedParcel?.project_id)
-  return p?.name || ''
+const projectName = computed(() => ui.currentProject?.name || '')
+const parcelsTileUrl = computed(() => {
+  if (!ui.currentProject?.name) return ''
+  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current').join(',')
+  if (!periods) return ''
+  const base = import.meta.env.VITE_API_BASE || '/api'
+  return `${base}/parcels/tiles/{z}/{x}/{y}?project_name=${encodeURIComponent(ui.currentProject.name)}&period=${periods}`
 })
 
 // 批量选择（地图点击进入选中集）
@@ -478,7 +442,7 @@ const savingDraw = ref(false)
 // SHP 导入
 const importVisible = ref(false)
 const importFile = ref(null)
-const importOpts = ref({ period: 'base', project_id: null, name_field: '', land_use_field: '', region_field: '', region_code: '' })
+const importOpts = ref({ period: 'base', name_field: '', code_field: '', land_use_field: '' })
 const importing = ref(false)
 const importResult = ref(null)
 
@@ -491,17 +455,15 @@ const poiType = ref('')
 const poiLoading = ref(false)
 const poiImportVisible = ref(false)
 const poiImportFile = ref(null)
-const poiImportOpts = ref({ period: 'base', project_id: null, name_field: '', type_field: '' })
+const poiImportOpts = ref({ period: 'base', name_field: '', type_field: '' })
 const poiImporting = ref(false)
 const poiImportResult = ref(null)
 
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
-    loadMapParcels(),
-    store.fetchPoisGeojson(),
-    store.fetchZonesGeojson(),
-    loadProjects(),
+    store.fetchPoisGeojson(projectName.value || undefined),
+    store.fetchZonesGeojson(projectName.value || undefined),
     loadMapFeatures(),
     loadPois(),
   ])
@@ -512,51 +474,12 @@ onMounted(async () => {
   }
 })
 
-async function loadProjects() {
-  projects.value = await getProjects()
-}
-
 function togglePanel(name) {
   panelOpen.value = panelOpen.value === name ? null : name
 }
 
-/** v4.0.3：按视野 bbox 智能加载勾选期次地块（防抖 + 缓存复用 + 面积保护 + 要素封顶） */
-const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
-const lastBbox = ref(null)
-const mapHint = ref('')   // 视野内要素过多 / 视野过大时的提示
-let mapFetchSeq = 0
-
-async function loadMapParcels(bbox) {
-  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
-  const seq = ++mapFetchSeq
-  if (!periods.length) {
-    mapParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
-    mapHint.value = ''
-    return
-  }
-  const fc = await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
-  if (seq !== mapFetchSeq) return  // 已有更新的请求，丢弃本次结果
-  if (fc.skipped) {
-    // 视野过大 / 请求被取消：保留当前图层，仅更新提示，不打断交互
-    mapHint.value = fc.reason === 'area'
-      ? '当前视野过大，已暂停加载地块（放大后可自动恢复）'
-      : mapHint.value
-    return
-  }
-  mapParcelsGeojson.value = fc
-  mapHint.value = fc.truncated
-    ? `视野内共 ${fc.total} 宗地块，仅显示前 ${fc.features.length} 宗（按编号截断），请放大视野查看局部详情`
-    : ''
-}
-
-const onMoveEnd = debounce((bbox) => {
-  lastBbox.value = bbox
-  loadMapParcels(bbox)
-}, 400)
-
 function onPeriodToggle() {
   loadPage(1)
-  loadMapParcels(lastBbox.value)
 }
 
 /** 表格期次参数：只勾选单一期次时下推后端过滤；否则不过滤 */
@@ -573,7 +496,7 @@ async function loadPage(p) {
     const data = await store.fetchParcels({
       q: query.value || undefined,
       land_use: landUse.value || undefined,
-      region_code: activeRegion.value?.code || undefined,
+      project_name: projectName.value || undefined,
       period: tablePeriodParam(),
       page: page.value,
       page_size: pageSize.value,
@@ -590,8 +513,6 @@ function onRowClick(row) {
   store.selectParcel(row)
   highlightId.value = row.id
   drawerVisible.value = true
-  const feature = mapParcelsGeojson.value.features.find((f) => f.properties.id === row.id)
-  if (feature && mapRef.value) mapRef.value.flyTo(feature)
   loadPlanning(row.id)
 }
 
@@ -617,10 +538,7 @@ async function loadPlanning(parcelId) {
 }
 
 function flyToSelected() {
-  const feature = mapParcelsGeojson.value.features.find(
-    (f) => f.properties.id === store.selectedParcel?.id
-  )
-  if (feature && mapRef.value) mapRef.value.flyTo(feature)
+  // 矢量瓦片模式下，地块详情定位暂由地图点击/全局搜索承接。
 }
 
 // ---------- v4.0 POI 点击查看 ----------
@@ -651,9 +569,7 @@ function gotoTransition(parcel) {
 
 // 行政区选择器联动
 function onRegionSelect(region) {
-  activeRegion.value = region?.level === 'county' ? region : null
-  if (activeRegion.value) loadPage(1)
-  else if (!region) { activeRegion.value = null; loadPage(1) }
+  // 区域选择仅用于地图定位，不再作为数据过滤条件；数据始终跟随当前项目。
 }
 
 function onRegionLocate(locate) {
@@ -674,17 +590,11 @@ async function loadRegionBoundary(code) {
   }
 }
 
-function clearRegionFilter() {
-  activeRegion.value = null
-  loadPage(1)
-}
-
 function openCreate() {
   form.value = {
     parcel_code: '', name: '', land_use: '住宅用地', period: 'base',
-    project_id: ui.currentProjectId || null,
-    district: activeRegion.value?.name || '', region_code: activeRegion.value?.code || '',
-    area_sqm: 50000, far_limit: null, height_limit: null, geometryText: '',
+    project_name: projectName.value || null,
+    area_sqm: 50000, geometryText: '',
   }
   dialogVisible.value = true
 }
@@ -707,12 +617,8 @@ async function submitForm() {
       name: form.value.name,
       land_use: form.value.land_use,
       period: form.value.period,
-      project_id: form.value.project_id || null,
-      district: form.value.district || null,
-      region_code: form.value.region_code || null,
+      project_name: projectName.value || null,
       area_sqm: form.value.area_sqm,
-      far_limit: form.value.far_limit,
-      height_limit: form.value.height_limit,
       geometry: JSON.parse(form.value.geometryText || '{}'),
     }
     await createParcel(payload)
@@ -789,7 +695,11 @@ async function batchDeleteOnMap() {
   ElMessage.success(`已删除 ${p.deleted.length + poi.deleted.length + z.deleted.length} 个要素` +
     (lockedTotal ? `，${lockedTotal} 个已锁定被跳过` : ''))
   mapRef.value?.clearBatchSelection()
-  await Promise.all([loadPage(1), store.fetchPoisGeojson(), store.fetchZonesGeojson()])
+  await Promise.all([
+    loadPage(1),
+    store.fetchPoisGeojson(projectName.value || undefined),
+    store.fetchZonesGeojson(projectName.value || undefined),
+  ])
 }
 
 async function lockSelectedOnMap() {
@@ -811,7 +721,7 @@ async function onSelectionDelete(selection) {
   const total = parcelCount + poiCount + zoneCount
   if (!total) { ElMessage.warning('所选范围内没有可删除的要素'); return }
   // v4.0.3：地块删除走服务端几何查询（覆盖范围内全部地块，即使地图因要素封顶只显示了一部分）
-  const note = mapHint.value ? '（地图当前仅显示部分地块，删除将以框选几何在服务端匹配全部地块）' : ''
+  const note = '（地块删除以框选几何在服务端匹配全部地块）'
   await ElMessageBox.confirm(
     `确定删除圈选范围内的 ${total} 个要素吗？${note}（地块 ${parcelCount} / 兴趣点 ${poiCount} / 控制线 ${zoneCount}；锁定要素自动跳过，此操作不可恢复）`,
     '圈选删除确认',
@@ -833,9 +743,8 @@ async function onSelectionDelete(selection) {
     store.invalidateParcelsGeojsonCache()  // v4.0.3：清缓存，强制刷新删除后的最新数据
     await Promise.all([
       loadPage(1),
-      loadMapParcels(),
-      store.fetchPoisGeojson(),
-      store.fetchZonesGeojson(),
+      store.fetchPoisGeojson(projectName.value || undefined),
+      store.fetchZonesGeojson(projectName.value || undefined),
       loadPois(),
     ])
   } catch (e) {
@@ -847,7 +756,7 @@ async function onSelectionDelete(selection) {
 async function loadMapFeatures() {
   featuresLoading.value = true
   try {
-    mapFeatures.value = await getMapFeatures()
+    mapFeatures.value = await getMapFeatures({ project_name: projectName.value || undefined })
   } finally {
     featuresLoading.value = false
   }
@@ -873,7 +782,7 @@ async function doSaveDrawing() {
     await createMapFeature({
       name: saveDrawForm.value.name.trim(),
       feature_type: saveDrawForm.value.feature_type,
-      project_id: ui.currentProjectId || null,
+      project_name: projectName.value || null,
       geometry: pendingDrawing.value.geometry,
     })
     ElMessage.success('绘制已保存到数据库（标注图层）')
@@ -908,8 +817,7 @@ function openImport() {
   importResult.value = null
   importFile.value = null
   importOpts.value = {
-    period: 'base', project_id: ui.currentProjectId || null,
-    name_field: '', land_use_field: '', region_field: '', region_code: '',
+    period: 'base', name_field: '', code_field: '', land_use_field: '',
   }
   importVisible.value = true
 }
@@ -921,8 +829,8 @@ function onFileChange(file) {
 async function doImport() {
   if (!importFile.value) return
   // v3.0：上传数据强制关联分析项目（后端同样校验，前端先行提示）
-  if (!importOpts.value.project_id) {
-    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+  if (!projectName.value) {
+    ElMessage.warning('请先在顶栏选择或创建分析项目')
     return
   }
   importing.value = true
@@ -931,8 +839,8 @@ async function doImport() {
     const fd = new FormData()
     fd.append('file', importFile.value)
     fd.append('period', importOpts.value.period || 'base')
-    if (importOpts.value.project_id) fd.append('project_id', importOpts.value.project_id)
-    for (const key of ['name_field', 'land_use_field', 'region_field', 'region_code']) {
+    fd.append('project_name', projectName.value)
+    for (const key of ['name_field', 'code_field', 'land_use_field']) {
       if (importOpts.value[key]) fd.append(key, importOpts.value[key])
     }
     const result = await importParcelsShp(fd)
@@ -940,7 +848,7 @@ async function doImport() {
     if (result.imported > 0) {
       ElMessage.success(`导入完成：成功 ${result.imported} 条（期次：${importOpts.value.period === 'base' ? '基期' : '末期'}）`)
       store.invalidateParcelsGeojsonCache()  // v4.0.3：导入后强制地图重新加载
-      await Promise.all([loadPage(1), loadMapParcels(lastBbox.value)])
+      await loadPage(1)
     } else {
       const firstReason = result.skipped?.[0]?.reason || '未知原因'
       ElMessage.warning(`导入未成功（0 条入库）：${firstReason}，详见下方明细`)
@@ -954,7 +862,7 @@ async function doImport() {
 
 async function afterImportRefresh() {
   store.invalidateParcelsGeojsonCache()  // v4.0.3：导入新数据后强制地图重新加载
-  await Promise.all([loadPage(1), loadMapParcels(lastBbox.value)])
+  await loadPage(1)
   ElMessage.success('列表与地图已刷新')
 }
 
@@ -965,6 +873,7 @@ async function loadPois(p) {
   try {
     const data = await getPois({
       poi_type: poiType.value || undefined,
+      project_name: projectName.value || undefined,
       page: poiPage.value,
       page_size: poiPageSize.value,
     })
@@ -981,7 +890,7 @@ function openPoiImport() {
   poiImportResult.value = null
   poiImportFile.value = null
   poiImportOpts.value = {
-    period: 'base', project_id: ui.currentProjectId || null,
+    period: 'base',
     name_field: '', type_field: '',
   }
   poiImportVisible.value = true
@@ -993,8 +902,8 @@ function onPoiFileChange(file) {
 
 async function doPoiImport() {
   if (!poiImportFile.value) return
-  if (!poiImportOpts.value.project_id) {
-    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+  if (!projectName.value) {
+    ElMessage.warning('请先在顶栏选择或创建分析项目')
     return
   }
   poiImporting.value = true
@@ -1003,7 +912,7 @@ async function doPoiImport() {
     const fd = new FormData()
     fd.append('file', poiImportFile.value)
     fd.append('period', poiImportOpts.value.period || 'base')
-    fd.append('project_id', poiImportOpts.value.project_id)
+    fd.append('project_name', projectName.value)
     for (const key of ['name_field', 'type_field']) {
       if (poiImportOpts.value[key]) fd.append(key, poiImportOpts.value[key])
     }
@@ -1011,7 +920,7 @@ async function doPoiImport() {
     poiImportResult.value = result
     if (result.imported > 0) {
       ElMessage.success(`POI 导入完成：成功 ${result.imported} 条`)
-      await Promise.all([loadPois(), store.fetchPoisGeojson()])
+      await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
     } else {
       const firstReason = result.skipped?.[0]?.reason || '未知原因'
       ElMessage.warning(`POI 导入未成功（0 条入库）：${firstReason}，详见下方明细`)
@@ -1024,7 +933,7 @@ async function doPoiImport() {
 }
 
 async function afterPoiImportRefresh() {
-  await Promise.all([loadPois(), store.fetchPoisGeojson()])
+  await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
   ElMessage.success('POI 列表与地图已刷新')
 }
 
@@ -1034,7 +943,7 @@ async function onDeletePoi(row) {
     await deletePoi(row.id)
     ElMessage.success('已删除')
     if (poiDetail.value.id === row.id) poiDetailVisible.value = false
-    await Promise.all([loadPois(), store.fetchPoisGeojson()])
+    await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
   } catch (e) {
     ElMessage.warning(e?.message || '删除失败（可能已锁定）')
   }
