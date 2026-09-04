@@ -389,10 +389,15 @@ function ensureAllLayers() {
 }
 
 function ensureLayer(key, geojson, tileUrl = '') {
-  if (!map) return
+  if (!map || !map.loaded()) return
   if (key === 'parcels' && tileUrl) {
     const src = 'parcels-vt-source'
     parcelsSourceId.value = src
+    // 允许从 GeoJSON 空源切换为矢量瓦片源，避免同 id 图层重复添加。
+    for (const layerId of ['parcels-selected', 'parcels-fill', 'parcels-line']) {
+      if (map.getLayer(layerId)) map.removeLayer(layerId)
+    }
+    if (map.getSource('parcels-source')) map.removeSource('parcels-source')
     if (!map.getSource(src)) {
       map.addSource(src, {
         type: 'vector',
@@ -405,6 +410,10 @@ function ensureLayer(key, geojson, tileUrl = '') {
       addLayer('parcels', src)
     } else {
       map.getSource(src).setTiles([tileUrl])
+      // 若图层被移除过，重新挂载到矢量源上。
+      if (!map.getLayer('parcels-fill') || !map.getLayer('parcels-line')) {
+        addLayer('parcels', src)
+      }
     }
     return
   }
@@ -498,7 +507,7 @@ function ensureDrawLayers() {
 }
 
 function applyVisibility() {
-  if (!map) return
+  if (!map || !map.loaded()) return
   const vis = (layerId, on) => {
     if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', on ? 'visible' : 'none')
   }
