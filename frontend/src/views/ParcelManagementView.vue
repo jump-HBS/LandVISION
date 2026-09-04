@@ -457,8 +457,8 @@ const poiImportResult = ref(null)
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
-    store.fetchPoisGeojson(projectName.value || undefined),
-    store.fetchZonesGeojson(projectName.value || undefined),
+    store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined),
+    store.fetchZonesGeojson(projectName.value ? { project_name: projectName.value } : undefined),
     loadMapFeatures(),
     loadPois(),
   ])
@@ -473,8 +473,8 @@ onMounted(async () => {
 watch(() => [ui.currentProjectId, showPeriods.value], async () => {
   await Promise.all([
     loadPage(1),
-    store.fetchPoisGeojson(projectName.value || undefined),
-    store.fetchZonesGeojson(projectName.value || undefined),
+    store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined),
+    store.fetchZonesGeojson(projectName.value ? { project_name: projectName.value } : undefined),
     loadMapFeatures(),
     loadPois(),
   ])
@@ -722,8 +722,8 @@ async function batchDeleteOnMap() {
   mapRef.value?.clearBatchSelection()
   await Promise.all([
     loadPage(1),
-    store.fetchPoisGeojson(projectName.value || undefined),
-    store.fetchZonesGeojson(projectName.value || undefined),
+    store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined),
+    store.fetchZonesGeojson(projectName.value ? { project_name: projectName.value } : undefined),
   ])
 }
 
@@ -769,8 +769,8 @@ async function onSelectionDelete(selection) {
     await Promise.all([
       loadPage(1),
       loadProjectParcels(),
-      store.fetchPoisGeojson(projectName.value || undefined),
-      store.fetchZonesGeojson(projectName.value || undefined),
+      store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined),
+      store.fetchZonesGeojson(projectName.value ? { project_name: projectName.value } : undefined),
       loadPois(),
     ])
   } catch (e) {
@@ -946,7 +946,7 @@ async function doPoiImport() {
     poiImportResult.value = result
     if (result.imported > 0) {
       ElMessage.success(`POI 导入完成：成功 ${result.imported} 条`)
-      await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
+      await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined)])
     } else {
       const firstReason = result.skipped?.[0]?.reason || '未知原因'
       ElMessage.warning(`POI 导入未成功（0 条入库）：${firstReason}，详见下方明细`)
@@ -959,7 +959,7 @@ async function doPoiImport() {
 }
 
 async function afterPoiImportRefresh() {
-  await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
+  await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined)])
   ElMessage.success('POI 列表与地图已刷新')
 }
 
@@ -969,7 +969,7 @@ async function onDeletePoi(row) {
     await deletePoi(row.id)
     ElMessage.success('已删除')
     if (poiDetail.value.id === row.id) poiDetailVisible.value = false
-    await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value || undefined)])
+    await Promise.all([loadPois(), store.fetchPoisGeojson(projectName.value ? { project_name: projectName.value } : undefined)])
   } catch (e) {
     ElMessage.warning(e?.message || '删除失败（可能已锁定）')
   }
