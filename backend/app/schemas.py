@@ -131,6 +131,7 @@ class ScopeBody(BaseModel):
 
     scope: Optional[Dict[str, Any]] = Field(None, description="分析范围 GeoJSON（可选）")
     project_id: Optional[int] = Field(None, description="所属分析项目 id（用于持久化与范围校验）")
+    include_changes: bool = Field(False, description="是否生成变化图斑几何（默认仅统计矩阵）")
 
 
 class SuitabilityRequest(BaseModel):

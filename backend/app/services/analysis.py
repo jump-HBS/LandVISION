@@ -112,6 +112,124 @@ def _load_zones(db, project_name: Optional[str] = None) -> list:
     ]
 
 
+def _count_parcels_period(db, period: str, project_name: Optional[str],
+                          scope: Optional[dict]) -> int:
+    """POSTGIS 模式按项目/范围统计期次地块数，不加载几何。"""
+    from sqlalchemy import func, text
+    from ..models import Parcel
+    q = db.query(func.count(Parcel.id)).filter(Parcel.period == period)
+    if project_name:
+        q = q.filter(Parcel.project_name == project_name)
+    if scope:
+        from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_Intersects
+        q = q.filter(ST_Intersects(Parcel.geom, ST_GeomFromGeoJSON(json.dumps(scope))))
+    return q.scalar() or 0
+
+
+def _load_parcel_unions(db, period: str, project_name: Optional[str],
+                        scope: Optional[dict]) -> dict:
+    """POSTGIS 模式按用地类型合并地块几何，仅返回 12 类聚合几何。"""
+    from sqlalchemy import text
+    filters = ["period = :period"]
+    params = {"period": period}
+    if project_name:
+        filters.append("project_name = :project_name")
+        params["project_name"] = project_name
+    if scope:
+        filters.append("ST_Intersects(geom, ST_GeomFromGeoJSON(:scope))")
+        params["scope"] = json.dumps(scope)
+    sql = (
+        "SELECT land_use, "
+        "ST_AsGeoJSON(ST_Union(ST_SimplifyPreserveTopology(geom, 0.0001)), 8, 0) AS geometry_json "
+        "FROM parcels WHERE " + " AND ".join(filters) + " GROUP BY land_use"
+    )
+    rows = db.execute(text(sql), params).fetchall()
+    return {row.land_use: shape(json.loads(row.geometry_json)) for row in rows}
+
+
+def _transition_matrix_stats_postgis(db, project_name: Optional[str],
+                                    scope: Optional[dict]) -> dict:
+    """POSTGIS 快速转移矩阵统计：只算面积，不生成变化图斑几何。"""
+    from sqlalchemy import text
+
+    def period_clause(period):
+        clauses = [f"period = '{period}'"]
+        if project_name:
+            clauses.append("project_name = :project_name")
+        if scope:
+            clauses.append("ST_Intersects(geom, ST_GeomFromGeoJSON(:scope))")
+        return " AND ".join(clauses)
+
+    params = {}
+    if project_name:
+        params["project_name"] = project_name
+    if scope:
+        params["scope"] = json.dumps(scope)
+
+    def count(period):
+        sql = f"SELECT count(*) FROM parcels WHERE {period_clause(period)}"
+        return db.execute(text(sql), params).scalar() or 0
+
+    base_count = count("base")
+    current_count = count("current")
+    if not base_count or not current_count:
+        return {"rows": [], "summary": [], "changes_geojson": {"type": "FeatureCollection", "features": []},
+                "base_count": base_count, "current_count": current_count,
+                "hint": "缺少两期数据，请先导入基期/末期 SHP 或一键生成演示基期",
+                "persisted": False}
+
+    sql = f"""
+        WITH base AS (
+            SELECT land_use, ST_Union(ST_SimplifyPreserveTopology(geom, 0.001)) geom
+            FROM parcels
+            WHERE {period_clause("base")}
+            GROUP BY land_use
+        ),
+        current AS (
+            SELECT land_use, ST_Union(ST_SimplifyPreserveTopology(geom, 0.001)) geom
+            FROM parcels
+            WHERE {period_clause("current")}
+            GROUP BY land_use
+        )
+        SELECT b.land_use AS from_use,
+               c.land_use AS to_use,
+               ST_Area(ST_Transform(ST_Intersection(b.geom, c.geom), 3857)) AS area_sqm
+        FROM base b
+        JOIN current c ON ST_Intersects(b.geom, c.geom)
+    """
+    rows = [
+        {"from_use": row.from_use, "to_use": row.to_use,
+         "area_sqm": round(float(row.area_sqm or 0), 2)}
+        for row in db.execute(text(sql), params).fetchall()
+    ]
+    base_areas = db.execute(text(f"""
+        SELECT land_use, COALESCE(SUM(area_sqm), 0)
+        FROM parcels WHERE {period_clause("base")} GROUP BY land_use
+    """), params).fetchall()
+    current_areas = db.execute(text(f"""
+        SELECT land_use, COALESCE(SUM(area_sqm), 0)
+        FROM parcels WHERE {period_clause("current")} GROUP BY land_use
+    """), params).fetchall()
+    base_area = {r.land_use: float(r[1] or 0) for r in base_areas}
+    current_area = {r.land_use: float(r[1] or 0) for r in current_areas}
+    use_types = sorted(set(base_area) | set(current_area))
+    summary = [
+        {"land_use": t,
+         "base_area_sqm": round(base_area.get(t, 0), 2),
+         "current_area_sqm": round(current_area.get(t, 0), 2),
+         "delta_sqm": round(current_area.get(t, 0) - base_area.get(t, 0), 2)}
+        for t in use_types
+    ]
+    return {
+        "rows": rows,
+        "summary": summary,
+        "changes_geojson": {"type": "FeatureCollection", "features": []},
+        "base_count": base_count,
+        "current_count": current_count,
+        "persisted": False,
+    }
+
+
 def _scope_geom(scope: Optional[dict]):
     return shape(scope) if scope else None
 
@@ -283,52 +401,81 @@ def list_accessibility(db=None, project_id: Optional[int] = None) -> list:
 # ===========================================================================
 
 def transition_matrix(db, scope: Optional[dict] = None,
-                      project_id: Optional[int] = None) -> dict:
+                      project_id: Optional[int] = None,
+                      include_changes: bool = False) -> dict:
     """两期用地叠加 → 转移矩阵 + 变化图斑（结果按项目持久化）。"""
     scope, _ = resolve_project_scope(db, project_id, scope)
     project_name = _project_name(db, project_id)
     scope_g = _scope_geom(scope)
-    base = _load_parcels(db, "base", project_name)
-    current = _load_parcels(db, "current", project_name)
-    if scope_g:
-        base = [p for p in base if p["geom"].intersects(scope_g)]
-        current = [p for p in current if p["geom"].intersects(scope_g)]
-    if not base or not current:
+    if not is_demo() and not include_changes:
+        return _transition_matrix_stats_postgis(db, project_name, scope)
+    from collections import defaultdict
+    from shapely.geometry import mapping
+
+    def group_unions(parcels):
+        groups = defaultdict(list)
+        for p in parcels:
+            groups[p["land_use"]].append(p["geom"])
+        return {land_use: unary_union(geoms) for land_use, geoms in groups.items()}
+
+    if is_demo():
+        base = _load_parcels(db, "base", project_name)
+        current = _load_parcels(db, "current", project_name)
+        if scope_g:
+            base = [p for p in base if p["geom"].intersects(scope_g)]
+            current = [p for p in current if p["geom"].intersects(scope_g)]
+        base_count = len(base)
+        current_count = len(current)
+        base_unions = group_unions(base)
+        current_unions = group_unions(current)
+    else:
+        base_count = _count_parcels_period(db, "base", project_name, scope)
+        current_count = _count_parcels_period(db, "current", project_name, scope)
+        base_unions = _load_parcel_unions(db, "base", project_name, scope)
+        current_unions = _load_parcel_unions(db, "current", project_name, scope)
+
+    if not base_count or not current_count or not base_unions or not current_unions:
         return {"rows": [], "summary": [], "changes_geojson": {"type": "FeatureCollection", "features": []},
-                "base_count": len(base), "current_count": len(current),
+                "base_count": base_count, "current_count": current_count,
                 "hint": "缺少两期数据，请先导入基期/末期 SHP 或一键生成演示基期"}
 
-    # 两两交集 → 按地类组合聚合
-    from collections import defaultdict
-    agg = defaultdict(float)
-    for b in base:
-        for c in current:
-            inter = b["geom"].intersection(c["geom"])
-            if not inter.is_empty and inter.area > 0:
-                agg[(b["land_use"], c["land_use"])] += _area_m2(inter)
+    # 先按用地类型合并，12 类 × 12 类叠加，避免逐宗两两相交。
+    base_union = unary_union(list(base_unions.values()))
+    current_union = unary_union(list(current_unions.values()))
 
-    # 消失（基期未保留）与新增（末期新出现）
-    base_union = unary_union([p["geom"] for p in base])
-    current_union = unary_union([p["geom"] for p in current])
-    vanished_geom = base_union.difference(current_union)
-    added_geom = current_union.difference(base_union)
+    agg = defaultdict(float)
+    pair_geoms = []
+    for from_use, base_geom in base_unions.items():
+        for to_use, current_geom in current_unions.items():
+            inter = base_geom.intersection(current_geom)
+            if inter.is_empty or inter.area <= 0:
+                continue
+            area = _area_m2(inter)
+            agg[(from_use, to_use)] += area
+            if from_use != to_use:
+                pair_geoms.append((inter, from_use, to_use))
 
     rows = []
     for (from_use, to_use), area in sorted(agg.items()):
         rows.append({"from_use": from_use, "to_use": to_use, "area_sqm": round(area, 2)})
-    if not vanished_geom.is_empty:
-        rows.append({"from_use": "（消失）", "to_use": "—", "area_sqm": round(_area_m2(vanished_geom), 2)})
-    if not added_geom.is_empty:
-        rows.append({"from_use": "—", "to_use": "（新增）", "area_sqm": round(_area_m2(added_geom), 2)})
+    base_total_area = _area_m2(base_union)
+    current_total_area = _area_m2(current_union)
+    intersection_total = sum(agg.values())
+    vanished_area = max(base_total_area - intersection_total, 0)
+    added_area = max(current_total_area - intersection_total, 0)
+    if vanished_area > 0:
+        rows.append({"from_use": "（消失）", "to_use": "—", "area_sqm": round(vanished_area, 2)})
+    if added_area > 0:
+        rows.append({"from_use": "—", "to_use": "（新增）", "area_sqm": round(added_area, 2)})
 
     # 各类型面积变化汇总
-    use_types = sorted({p["land_use"] for p in base + current})
+    use_types = sorted(set(base_unions) | set(current_unions))
     base_area = defaultdict(float)
     cur_area = defaultdict(float)
-    for p in base:
-        base_area[p["land_use"]] += p["area_sqm"] or _area_m2(p["geom"])
-    for p in current:
-        cur_area[p["land_use"]] += p["area_sqm"] or _area_m2(p["geom"])
+    for land_use, geom in base_unions.items():
+        base_area[land_use] += _area_m2(geom)
+    for land_use, geom in current_unions.items():
+        cur_area[land_use] += _area_m2(geom)
     summary = [
         {"land_use": t,
          "base_area_sqm": round(base_area.get(t, 0), 2),
@@ -338,7 +485,6 @@ def transition_matrix(db, scope: Optional[dict] = None,
     ]
 
     # 变化图斑（地图渲染）+ 持久化
-    from shapely.geometry import mapping
     patch_records = []   # 持久化记录
     changes = []         # 返回 GeoJSON（附 patch_id）
     def add_change(geom, kind, change_type, from_use, to_use):
@@ -351,17 +497,10 @@ def transition_matrix(db, scope: Optional[dict] = None,
                         "properties": {"kind": kind, "change_type": change_type,
                                        "from_use": from_use, "to_use": to_use,
                                        "patch_id": None}})
-    if not added_geom.is_empty:
-        add_change(added_geom, "新增", "新增", None, None)
-    if not vanished_geom.is_empty:
-        add_change(vanished_geom, "消失", "拆除", None, None)
-    for b in base:
-        for c in current:
-            inter = b["geom"].intersection(c["geom"])
-            if not inter.is_empty and inter.area > 0 and b["land_use"] != c["land_use"]:
-                add_change(inter, "转换",
-                           "植被变化" if c["land_use"] in ("耕地", "园地", "林地", "草地")
-                           else "新增建设", b["land_use"], c["land_use"])
+    for inter, from_use, to_use in pair_geoms:
+        add_change(inter, "转换",
+                   "植被变化" if to_use in ("耕地", "园地", "林地", "草地")
+                   else "新增建设", from_use, to_use)
 
     if project_id:
         _clear_patches(db, project_id)
@@ -373,8 +512,8 @@ def transition_matrix(db, scope: Optional[dict] = None,
         "rows": rows,
         "summary": summary,
         "changes_geojson": {"type": "FeatureCollection", "features": changes},
-        "base_count": len(base),
-        "current_count": len(current),
+        "base_count": base_count,
+        "current_count": current_count,
         "persisted": project_id is not None,
     }
 

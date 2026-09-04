@@ -451,6 +451,7 @@ async function runMatrix() {
     result.value = await transitionMatrix({
       scope: scopeGeojson.value || null,
       project_id: ui.currentProjectId || null,
+      include_changes: false,
     })
     ui.bumpAnalysisVersion()  // v3.0：通知驾驶舱自动刷新
   } catch (e) {

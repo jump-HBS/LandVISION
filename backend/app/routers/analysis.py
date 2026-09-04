@@ -54,7 +54,10 @@ def generate_demo_base(body: ScopeBody, db=Depends(get_db)):
 @router.post("/transition/matrix", summary="计算用地转移矩阵（继承项目范围，结果持久化）")
 def transition_matrix(body: ScopeBody, db=Depends(get_db)):
     try:
-        return analysis.transition_matrix(db, scope=body.scope, project_id=body.project_id)
+        return analysis.transition_matrix(
+            db, scope=body.scope, project_id=body.project_id,
+            include_changes=body.include_changes,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
