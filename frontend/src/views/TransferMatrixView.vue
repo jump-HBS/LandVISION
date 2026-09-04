@@ -3,20 +3,14 @@
     <!-- 全屏地图：地块（按期次勾选显示，按视野 bbox 加载）+ 变化图斑 -->
     <MapView
       ref="mapRef"
-      :parcels="mapParcelsGeojson"
+      :parcels="projectParcelsGeojson"
       :changes="changesFc"
       :region-boundary="boundaryGeojson"
       enable-selection
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
-      @moveend="onMoveEnd"
     />
-
-    <!-- v4.0.3：视野要素过多 / 视野过大提示 -->
-    <div v-if="mapHint" class="map-hint-warn">
-      <el-icon :size="13"><WarningFilled /></el-icon>&nbsp;{{ mapHint }}
-    </div>
 
     <!-- 左侧：图标栏 -->
     <button class="page-icon-btn icon-left1" :class="{ active: panel === 'setup' }" title="数据准备"
@@ -42,7 +36,7 @@
         title="两期地块请在「地块管理」页通过 SHP 导入（选择基期/末期）；本页不再提供重复的导入入口，点击计算即可基于已导入的基期与末期数据生成转移矩阵。" />
       <div class="flex-row mb">
         <span class="scope-hint">地图显示期次（勾选即显示）：</span>
-        <el-checkbox-group v-model="showPeriods" size="small" @change="loadMapParcels(lastBbox)">
+        <el-checkbox-group v-model="showPeriods" size="small" @change="loadProjectParcels">
           <el-checkbox-button label="base">基期</el-checkbox-button>
           <el-checkbox-button label="current">末期</el-checkbox-button>
         </el-checkbox-group>
@@ -194,10 +188,9 @@ import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import { useRouter } from 'vue-router'
 import {
-  getRegion, transitionMatrix, parseScopeShp,
+  getRegion, transitionMatrix, parseScopeShp, getProjectParcelsGeoJSON,
 } from '../api'
 import { LAND_USE_ORDER, LAND_USE_COLORS } from '../utils/colors'
-import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 
 const store = useParcelStore()
@@ -253,7 +246,7 @@ const boundaryGeojson = ref(null)
 
 // v4.0：期次显示开关（数据统一在地块管理模块导入；此处只控制地图显示哪期）
 const showPeriods = ref(['base', 'current'])
-const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
+const projectParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 
 // 分析范围
 const scopeMode = ref('none')
@@ -341,45 +334,21 @@ function cellStyle(f, t) {
 }
 
 onMounted(async () => {
-  await loadMapParcels()
+  await loadProjectParcels()
 })
 
-/** v4.0.3：按视野 bbox 智能加载勾选期次地块（防抖 + 缓存复用 + 面积保护 + 要素封顶） */
-const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
-const lastBbox = ref(null)
-const mapHint = ref('')
-let mapFetchSeq = 0
-
-async function loadMapParcels(bbox) {
+async function loadProjectParcels() {
   const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current')
-  const seq = ++mapFetchSeq
   if (!periods.length) {
-    mapParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
-    mapHint.value = ''
+    projectParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
     return
   }
-  const fc = await store.fetchParcelsGeojsonBbox(
-    periods,
-    bbox || lastBbox.value || DEFAULT_BBOX,
-    ui.currentProject?.name || undefined,
-  )
-  if (seq !== mapFetchSeq) return
-  if (fc.skipped) {
-    mapHint.value = fc.reason === 'area'
-      ? '当前视野过大，已暂停加载地块（放大后可自动恢复）'
-      : mapHint.value
-    return
-  }
-  mapParcelsGeojson.value = fc
-  mapHint.value = fc.truncated
-    ? `视野内共 ${fc.total} 宗地块，仅显示前 ${fc.features.length} 宗（按编号截断），请放大视野查看局部详情`
-    : ''
+  projectParcelsGeojson.value = await getProjectParcelsGeoJSON({
+    project_name: ui.currentProject?.name || undefined,
+    period: periods.join(','),
+    simplify_tolerance: 0.00001,
+  })
 }
-
-const onMoveEnd = debounce((bbox) => {
-  lastBbox.value = bbox
-  loadMapParcels(bbox)
-}, 400)
 
 onBeforeUnmount(() => {
   charts.forEach((c) => c.dispose())

@@ -3,7 +3,7 @@
     <!-- 全屏地图 -->
     <MapView
       ref="mapRef"
-      :parcels="mapParcelsGeojson"
+      :parcels="projectParcelsGeojson"
       :zones="zonesGeojson"
       :region-boundary="boundaryGeojson"
       :highlight-id="highlightZoneId"
@@ -13,7 +13,6 @@
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
-      @moveend="onMoveEnd"
     />
 
     <!-- 左侧：图标栏 -->
@@ -279,9 +278,9 @@ import {
   getParcels, getZones, getZonesGeoJSON, getRegion, parseScopeShp,
   createZone, deleteZone, importZonesShp, reviewPlanning, exportReviewCsv,
   lockZone, batchDeleteZones, getPlanningRules, reviewPatches,
+  getProjectParcelsGeoJSON,
 } from '../api'
 import { LAND_USE_ORDER, ZONE_TYPE_LABELS, ZONE_TYPE_COLORS } from '../utils/colors'
-import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 
 const store = useParcelStore()
@@ -364,27 +363,15 @@ const reasonRows = computed(() => {
   return rows
 })
 
-// v4.0.3：按视野 bbox 智能加载地块（防抖 + 缓存复用 + 面积保护 + 要素封顶）
-const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
-const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
-const lastBbox = ref(null)
-let mapFetchSeq = 0
+const projectParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 
-async function loadMapParcels(bbox) {
-  const seq = ++mapFetchSeq
-  const fc = await store.fetchParcelsGeojsonBbox(
-    ['base', 'current'],
-    bbox || lastBbox.value || DEFAULT_BBOX,
-    currentProject.value?.name || undefined,
-  )
-  if (seq !== mapFetchSeq) return
-  if (!fc.skipped) mapParcelsGeojson.value = fc
+async function loadProjectParcels() {
+  projectParcelsGeojson.value = await getProjectParcelsGeoJSON({
+    project_name: currentProject.value?.name || undefined,
+    period: 'base,current',
+    simplify_tolerance: 0.00001,
+  })
 }
-
-const onMoveEnd = debounce((bbox) => {
-  lastBbox.value = bbox
-  loadMapParcels(bbox)
-}, 400)
 
 onMounted(async () => {
   await Promise.all([
@@ -393,7 +380,7 @@ onMounted(async () => {
       page_size: 100,
       project_name: currentProject.value?.name || undefined,
     }),
-    loadMapParcels(),
+    loadProjectParcels(),
     loadRules(),
   ])
   await loadZones()

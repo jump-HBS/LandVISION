@@ -3,7 +3,7 @@
     <!-- 全屏地图：地块 + 设施 POI + 覆盖/盲区专题 -->
     <MapView
       ref="mapRef"
-      :parcels="mapParcelsGeojson"
+      :parcels="projectParcelsGeojson"
       :pois="filteredPois"
       :coverage="coverageFc"
       :buffer="sitesFc.features.length ? sitesFc : null"
@@ -12,7 +12,6 @@
       @selection="onMapDraw"
       @region-select="onRegionSelect"
       @region-locate="onRegionLocate"
-      @moveend="onMoveEnd"
     />
 
     <!-- 左侧：图标栏 -->
@@ -157,9 +156,9 @@ import { useParcelStore } from '../stores/parcel'
 import { useUiStore } from '../stores/ui'
 import {
   getRegion, getPoisGeoJSON, accessibilityAnalyze, parseScopeShp, getFacilitySites,
+  getProjectParcelsGeoJSON,
 } from '../api'
 import { POI_COLORS } from '../utils/colors'
-import { debounce } from '../utils/geo'
 import MapView from '../components/MapView.vue'
 
 const POI_TYPES = Object.keys(POI_COLORS)
@@ -191,27 +190,15 @@ let charts = []
 const poisGeojson = ref({ type: 'FeatureCollection', features: [] })
 const coverageFc = computed(() => result.value?.parcels_geojson || { type: 'FeatureCollection', features: [] })
 
-// v4.0.3：按视野 bbox 智能加载地块（防抖 + 缓存复用 + 面积保护 + 要素封顶）
-const mapParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
-const DEFAULT_BBOX = [114.30, 30.47, 114.37, 30.53]
-const lastBbox = ref(null)
-let mapFetchSeq = 0
+const projectParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 
-async function loadMapParcels(bbox) {
-  const seq = ++mapFetchSeq
-  const fc = await store.fetchParcelsGeojsonBbox(
-    ['base', 'current'],
-    bbox || lastBbox.value || DEFAULT_BBOX,
-    ui.currentProject?.name || undefined,
-  )
-  if (seq !== mapFetchSeq) return
-  if (!fc.skipped) mapParcelsGeojson.value = fc
+async function loadProjectParcels() {
+  projectParcelsGeojson.value = await getProjectParcelsGeoJSON({
+    project_name: ui.currentProject?.name || undefined,
+    period: 'base,current',
+    simplify_tolerance: 0.00001,
+  })
 }
-
-const onMoveEnd = debounce((bbox) => {
-  lastBbox.value = bbox
-  loadMapParcels(bbox)
-}, 400)
 
 /** 地图上只显示所选类型的设施（不选 = 全部） */
 const filteredPois = computed(() => {
@@ -225,7 +212,7 @@ const filteredPois = computed(() => {
 
 onMounted(async () => {
   await Promise.all([
-    loadMapParcels(),
+    loadProjectParcels(),
     loadPois(),
   ])
   // v3.0 联动：转移矩阵 → 预置设施类型（先于范围继承处理，均消费后清除）
