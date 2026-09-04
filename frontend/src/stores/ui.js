@@ -29,8 +29,8 @@ export const useUiStore = defineStore('ui', {
     analysisScope: null,   // {geometry, label, kind: 'region'|'shp', code, level}（null=全量数据）
 
     // v2.0 分析项目上下文（业务上下文：范围 + 期次年份）
-    currentProjectId: null,
-    currentProject: null,  // {id, name, base_year, current_year, scope_geojson}
+    currentProjectId: Number(localStorage.getItem('landvision-project-id')) || null,
+    currentProject: JSON.parse(localStorage.getItem('landvision-project') || 'null'),
 
     // 模块联动参数（模块间跳转时传递）
     linkedPatches: null,   // 转移矩阵 → 体检：图斑 id 列表
@@ -84,6 +84,13 @@ export const useUiStore = defineStore('ui', {
     setProject(project) {
       this.currentProject = project
       this.currentProjectId = project?.id ?? null
+      if (project) {
+        localStorage.setItem('landvision-project-id', String(project.id))
+        localStorage.setItem('landvision-project', JSON.stringify(project))
+      } else {
+        localStorage.removeItem('landvision-project-id')
+        localStorage.removeItem('landvision-project')
+      }
     },
     setLinkedPatches(patchIds, scope, label) {
       this.linkedPatches = patchIds

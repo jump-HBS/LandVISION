@@ -13,14 +13,14 @@ router = APIRouter(prefix="/map-features", tags=["地图标注"])
 
 
 @router.get("", summary="标注列表（按项目过滤）")
-def list_features(project_id: Optional[int] = Query(None, description="所属分析项目 id"),
+def list_features(project_name: Optional[str] = Query(None, description="所属分析项目名称"),
                   db=Depends(get_db)):
-    return map_features.list_features(db, project_id=project_id)
+    return map_features.list_features(db, project_name=project_name)
 
 
 @router.get("/geojson", summary="标注 GeoJSON（地图渲染）")
-def features_geojson(project_id: Optional[int] = Query(None), db=Depends(get_db)):
-    return map_features.features_geojson(db, project_id=project_id)
+def features_geojson(project_name: Optional[str] = Query(None), db=Depends(get_db)):
+    return map_features.features_geojson(db, project_name=project_name)
 
 
 @router.post("", summary="保存地图绘制（点/线/面入库）", status_code=201)

@@ -156,8 +156,36 @@
         <el-form-item label="末期年份">
           <el-input-number v-model="projectForm.current_year" :min="1990" :max="2100" />
         </el-form-item>
+        <el-form-item label="项目范围">
+          <div class="project-scope">
+            <el-cascader
+              v-model="projectRegionPath"
+              :props="projectCascaderProps"
+              placeholder="选择省 / 市 / 县（任意层级）"
+              size="small"
+              clearable
+              filterable
+              style="width:100%"
+              @change="onProjectRegionChange" />
+            <div class="scope-file-row">
+              <el-upload
+                :auto-upload="false"
+                :limit="1"
+                accept=".zip"
+                :show-file-list="false"
+                :on-change="onProjectScopeFileChange">
+                <el-button size="small" type="primary" plain>选择 SHP zip</el-button>
+              </el-upload>
+              <el-button size="small" :loading="projectScopeImporting" :disabled="!projectScopeFile" @click="importProjectScope">
+                导入范围
+              </el-button>
+            </div>
+            <el-tag v-if="projectScopeLabel" size="small" type="success">待保存范围：{{ projectScopeLabel }}</el-tag>
+            <el-button v-else-if="projectScope" size="small" text @click="projectScope = null; projectRegionPath = []; projectScopeLabel = null">清空范围</el-button>
+          </div>
+        </el-form-item>
         <el-alert type="info" :closable="false"
-          title="分析范围（可选）稍后可在数据驾驶舱中划定；项目创建后，各分析模块自动继承项目范围与期次设置。" />
+          title="项目创建后，数据驾驶舱和所有分析模块自动继承此范围与期次设置。" />
       </el-form>
       <template #footer>
         <el-button @click="projectDialogVisible = false">取消</el-button>
@@ -172,7 +200,10 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUiStore } from './stores/ui'
-import { getParcels, getProjects, createProject } from './api'
+import {
+  getParcels, getProjects, getProject, createProject,
+  getRegions, getRegionChildren, getRegion, parseScopeShp,
+} from './api'
 
 const route = useRoute()
 const router = useRouter()
@@ -200,12 +231,45 @@ const selectedProjectId = ref(null)
 const projectDialogVisible = ref(false)
 const projectCreating = ref(false)
 const projectForm = ref({ name: '', base_year: 2020, current_year: 2026 })
+const projectScope = ref(null)
+const projectScopeLabel = ref(null)
+const projectRegionPath = ref([])
+const projectScopeFile = ref(null)
+const projectScopeImporting = ref(false)
+const projectCascaderProps = {
+  lazy: true,
+  checkStrictly: true,
+  value: 'code',
+  label: 'name',
+  lazyLoad: async (node, resolve) => {
+    try {
+      if (!node || node.level === 0) {
+        const data = await getRegions({ level: 'province', page_size: 100 })
+        resolve(data.items.map((p) => ({ code: p.code, name: p.name })))
+      } else {
+        const children = await getRegionChildren(node.value)
+        resolve(children.map((c) => ({ code: c.code, name: c.name, leaf: c.level === 'county' })))
+      }
+    } catch (e) {
+      resolve([])
+    }
+  },
+}
 
 async function loadProjects() {
   projects.value = await getProjects()
   if (ui.currentProjectId) {
     selectedProjectId.value = projects.value.some((p) => p.id === ui.currentProjectId)
       ? ui.currentProjectId : null
+    if (selectedProjectId.value) {
+      try {
+        ui.setProject(await getProject(selectedProjectId.value))
+      } catch (e) {
+        ui.setProject(null)
+      }
+    } else {
+      ui.setProject(null)
+    }
   }
 }
 
@@ -215,6 +279,41 @@ function onProjectChange(projectId) {
   ElMessage.success(project ? `已切换到项目「${project.name}」` : '已退出项目上下文（全量数据）')
 }
 
+async function onProjectRegionChange(path) {
+  if (!path?.length) return
+  const code = path[path.length - 1]
+  try {
+    const region = await getRegion(code)
+    if (!region?.geometry) {
+      ElMessage.warning(`「${region?.name || code}」暂无边界几何数据`)
+      projectRegionPath.value = []
+      return
+    }
+    projectScope.value = region.geometry
+    projectScopeLabel.value = region.name
+  } catch (e) {
+    ElMessage.warning('行政区范围读取失败')
+  }
+}
+
+function onProjectScopeFileChange(file) {
+  projectScopeFile.value = file.raw
+}
+
+async function importProjectScope() {
+  if (!projectScopeFile.value) return
+  projectScopeImporting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', projectScopeFile.value)
+    const result = await parseScopeShp(fd)
+    projectScope.value = result.scope
+    projectScopeLabel.value = `SHP 范围（${result.feature_count} 个要素）`
+  } finally {
+    projectScopeImporting.value = false
+  }
+}
+
 async function createProjectNow() {
   if (!projectForm.value.name.trim()) {
     ElMessage.warning('请填写项目名称')
@@ -222,13 +321,21 @@ async function createProjectNow() {
   }
   projectCreating.value = true
   try {
-    const project = await createProject({ ...projectForm.value, name: projectForm.value.name.trim() })
+    const project = await createProject({
+      ...projectForm.value,
+      name: projectForm.value.name.trim(),
+      scope: projectScope.value || null,
+    })
     await loadProjects()
     selectedProjectId.value = project.id
     ui.setProject(project)
     projectDialogVisible.value = false
     projectForm.value = { name: '', base_year: 2020, current_year: 2026 }
-    ElMessage.success(`项目「${project.name}」已创建，可到驾驶舱划定分析范围`)
+    projectScope.value = null
+    projectScopeLabel.value = null
+    projectRegionPath.value = []
+    projectScopeFile.value = null
+    ElMessage.success(`项目「${project.name}」已创建`)
   } catch (e) {
     ElMessage.error('创建失败：' + (e?.message || '未知原因'))
   } finally {
@@ -271,7 +378,12 @@ async function searchParcels(keyword) {
   if (!keyword) return
   searchLoading.value = true
   try {
-    const data = await getParcels({ q: keyword, page: 1, page_size: 8 })
+    const data = await getParcels({
+      q: keyword,
+      page: 1,
+      page_size: 8,
+      project_name: ui.currentProject?.name || undefined,
+    })
     searchResults.value = data.items
   } finally {
     searchLoading.value = false
@@ -418,6 +530,17 @@ function onSearchSelect(parcelId) {
 .status-text {
   font-size: 12px;
   color: var(--lv-text-secondary);
+}
+.project-scope {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scope-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .user-name {
   font-size: 13px;

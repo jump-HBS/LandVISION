@@ -12,24 +12,24 @@ CREATE TABLE IF NOT EXISTS parcels (
     parcel_code   VARCHAR(50) UNIQUE NOT NULL,   -- 地块编号（业务编码，如 A-01）
     name          VARCHAR(100) NOT NULL,         -- 地块名称
     land_use      VARCHAR(50) NOT NULL,          -- 用地性质（GB/T 21010-2017 一级类，12 大类）
-    district      VARCHAR(50),                   -- 行政区名称（如 武汉市洪山区）
-    region_code   VARCHAR(20),                   -- 行政区划代码（GB/T 2260，如 420111）
     area_sqm      NUMERIC(14, 2),                -- 面积（平方米）
-    far_limit     NUMERIC(6, 2),                 -- 容积率上限
-    height_limit  NUMERIC(6, 2),                 -- 建筑限高（米）
+    project_name  VARCHAR(100),                  -- 所属分析项目名称（V5.0 统一绑定）
     geom          geometry(Polygon, 4326) NOT NULL,  -- 地块边界（面）
     created_at    TIMESTAMP DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_parcels_geom ON parcels USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_parcels_project_name ON parcels (project_name);
 
 -- ---------- 2. 兴趣点表 pois ----------
 CREATE TABLE IF NOT EXISTS pois (
     id        SERIAL PRIMARY KEY,
     name      VARCHAR(100) NOT NULL,
     poi_type  VARCHAR(50) NOT NULL,              -- 交通/商业/教育/医疗/休闲
+    project_name VARCHAR(100),                   -- 所属分析项目名称（V5.0 统一绑定）
     geom      geometry(Point, 4326) NOT NULL     -- 点位
 );
 CREATE INDEX IF NOT EXISTS idx_pois_geom ON pois USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_pois_project_name ON pois (project_name);
 
 -- ---------- 3. 规划控制区表 planning_control ----------
 CREATE TABLE IF NOT EXISTS planning_control (
@@ -38,9 +38,11 @@ CREATE TABLE IF NOT EXISTS planning_control (
     zone_type    VARCHAR(50) NOT NULL,           -- 生态保护红线/永久基本农田/城镇开发边界/历史文化保护区
     zone_level   VARCHAR(20),                    -- 国家级/省级/市级
     control_desc TEXT,                           -- 管控要求描述
+    project_name VARCHAR(100),                   -- 所属分析项目名称（V5.0 统一绑定）
     geom         geometry(Polygon, 4326) NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_planning_geom ON planning_control USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_planning_project_name ON planning_control (project_name);
 
 -- ---------- 4. 行政区划表 regions（省/市/县三级） ----------
 CREATE TABLE IF NOT EXISTS regions (

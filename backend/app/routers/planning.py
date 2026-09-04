@@ -2,7 +2,7 @@
 """路由组：三区三线体检 planning —— 控制线管理 / 规则矩阵 / 合规检查 / 批量体检 / 图斑体检 / 台账。"""
 from typing import Optional
 
-from fastapi import (APIRouter, Depends, File, Form, HTTPException, UploadFile)
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query, UploadFile)
 from fastapi.responses import PlainTextResponse
 
 from ..config import settings
@@ -17,13 +17,15 @@ router = APIRouter(prefix="/planning", tags=["三区三线体检"])
 
 # ---------- 三区三线控制线 ----------
 @router.get("/zones", summary="控制线列表（三区三线）")
-def list_zones(db=Depends(get_db)):
-    return planning_check.list_zones(db)
+def list_zones(project_name: Optional[str] = Query(None, description="按项目名称过滤"),
+               db=Depends(get_db)):
+    return planning_check.list_zones(db, project_name=project_name)
 
 
 @router.get("/zones/geojson", summary="控制线 GeoJSON")
-def zones_geojson(db=Depends(get_db)):
-    return planning_check.zones_geojson(db)
+def zones_geojson(project_name: Optional[str] = Query(None, description="按项目名称过滤"),
+                  db=Depends(get_db)):
+    return planning_check.zones_geojson(db, project_name=project_name)
 
 
 @router.post("/zones", summary="新增控制线（标准三线，支持图上绘制）", status_code=201)
@@ -86,7 +88,7 @@ async def import_zones_shp(
     zone_type: Optional[str] = Form(None, description="统一类型：permanent_basic_farmland / ecological_red_line / urban_growth_boundary"),
     name_field: Optional[str] = Form(None, description="要素名称字段（可自动识别）"),
     type_field: Optional[str] = Form(None, description="类型字段（未指定 zone_type 时容错映射）"),
-    project_id: Optional[int] = Form(None, description="所属分析项目 id"),
+    project_name: Optional[str] = Form(None, description="所属分析项目名称"),
     period: Optional[str] = Form(None, description="期次（可选）"),
     db=Depends(get_db),
 ):
@@ -100,7 +102,7 @@ async def import_zones_shp(
         from ..services import shp_import
         return planning_check.import_zones_from_zip(
             content, db, name_field=name_field, type_field=type_field,
-            zone_type=zone_type, project_id=project_id, period=period,
+            zone_type=zone_type, project_name=project_name, period=period,
         )
     except shp_import.ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

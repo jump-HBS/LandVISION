@@ -246,11 +246,6 @@
             <el-radio-button v-for="(label, code) in ZONE_TYPE_LABELS" :key="code" :label="code">{{ label }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="所属项目（必选）">
-          <el-select v-model="zoneImportForm.project_id" style="width:240px" placeholder="选择分析项目（必选，v3.0 上传数据必须关联项目）">
-            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="SHP 压缩包">
           <el-upload :auto-upload="false" :limit="1" accept=".zip"
                      :on-change="(f) => (zoneImportFile = f.raw)"
@@ -283,7 +278,7 @@ import { useUiStore } from '../stores/ui'
 import {
   getParcels, getZones, getZonesGeoJSON, getRegion, parseScopeShp,
   createZone, deleteZone, importZonesShp, reviewPlanning, exportReviewCsv,
-  lockZone, batchDeleteZones, getPlanningRules, reviewPatches, getProjects,
+  lockZone, batchDeleteZones, getPlanningRules, reviewPatches,
 } from '../api'
 import { LAND_USE_ORDER, ZONE_TYPE_LABELS, ZONE_TYPE_COLORS } from '../utils/colors'
 import { debounce } from '../utils/geo'
@@ -299,7 +294,6 @@ const boundaryGeojson = ref(null)
 const zones = ref([])
 const zonesGeojson = ref({ type: 'FeatureCollection', features: [] })
 const highlightZoneId = ref(null)
-const projects = ref([])
 
 // 体检范围
 const scopeMode = ref('project')
@@ -313,7 +307,7 @@ const currentProject = computed(() => ui.currentProject)
 const zoneForm = ref({ zone_type: 'permanent_basic_farmland', zone_name: '' })
 const drawingZone = ref(false)
 const zoneImportVisible = ref(false)
-const zoneImportForm = ref({ zone_type: 'permanent_basic_farmland', project_id: null })
+const zoneImportForm = ref({ zone_type: 'permanent_basic_farmland', project_name: null })
 const zoneImportFile = ref(null)
 const zoneImporting = ref(false)
 const selectedZones = ref([])
@@ -378,7 +372,11 @@ let mapFetchSeq = 0
 
 async function loadMapParcels(bbox) {
   const seq = ++mapFetchSeq
-  const fc = await store.fetchParcelsGeojsonBbox(['base', 'current'], bbox || lastBbox.value || DEFAULT_BBOX)
+  const fc = await store.fetchParcelsGeojsonBbox(
+    ['base', 'current'],
+    bbox || lastBbox.value || DEFAULT_BBOX,
+    currentProject.value?.name || undefined,
+  )
   if (seq !== mapFetchSeq) return
   if (!fc.skipped) mapParcelsGeojson.value = fc
 }
@@ -390,9 +388,12 @@ const onMoveEnd = debounce((bbox) => {
 
 onMounted(async () => {
   await Promise.all([
-    store.fetchParcels({ page: 1, page_size: 100 }),
+    store.fetchParcels({
+      page: 1,
+      page_size: 100,
+      project_name: currentProject.value?.name || undefined,
+    }),
     loadMapParcels(),
-    loadProjects(),
     loadRules(),
   ])
   await loadZones()
@@ -414,10 +415,6 @@ onMounted(async () => {
   }
 })
 
-async function loadProjects() {
-  projects.value = await getProjects()
-}
-
 async function loadRules() {
   const data = await getPlanningRules()
   rulesRows.value = data.rows
@@ -425,12 +422,17 @@ async function loadRules() {
 }
 
 async function loadZones() {
-  zones.value = await getZones()
-  zonesGeojson.value = await getZonesGeoJSON()
+  const projectName = currentProject.value?.name || undefined
+  zones.value = await getZones({ project_name: projectName })
+  zonesGeojson.value = await getZonesGeoJSON({ project_name: projectName })
 }
 
 async function loadParcels() {
-  const data = await getParcels({ page: 1, page_size: 100 })
+  const data = await getParcels({
+    page: 1,
+    page_size: 100,
+    project_name: currentProject.value?.name || undefined,
+  })
   const luSet = new Set(parcelLandUses.value)
   parcelOptions.value = luSet.size
     ? data.items.filter((p) => luSet.has(p.land_use))
@@ -525,7 +527,7 @@ async function submitDrawZone(geometry) {
       zone_name: zoneForm.value.zone_name || ZONE_TYPE_LABELS[zoneForm.value.zone_type],
       zone_type: zoneForm.value.zone_type,
       control_desc: `手动绘制（${ZONE_TYPE_LABELS[zoneForm.value.zone_type]}）`,
-      project_id: ui.currentProjectId || null,
+      project_name: currentProject.value?.name || null,
       geometry,
     })
     ElMessage.success('控制线已新增')
@@ -537,7 +539,10 @@ async function submitDrawZone(geometry) {
 }
 
 function openZoneImport() {
-  zoneImportForm.value = { zone_type: 'permanent_basic_farmland', project_id: ui.currentProjectId || null }
+  zoneImportForm.value = {
+    zone_type: 'permanent_basic_farmland',
+    project_name: currentProject.value?.name || null,
+  }
   zoneImportFile.value = null
   zoneImportVisible.value = true
 }
@@ -545,8 +550,8 @@ function openZoneImport() {
 async function importZonesShpFile() {
   if (!zoneImportFile.value) return
   // v3.0：控制线导入强制关联分析项目
-  if (!zoneImportForm.value.project_id) {
-    ElMessage.warning('请先选择所属项目（v3.0 起上传数据必须关联分析项目；无项目请先在顶栏「项目工作台」创建）')
+  if (!zoneImportForm.value.project_name) {
+    ElMessage.warning('请先选择所属项目（无项目请先在顶栏「项目工作台」创建）')
     return
   }
   zoneImporting.value = true
@@ -554,7 +559,7 @@ async function importZonesShpFile() {
     const fd = new FormData()
     fd.append('file', zoneImportFile.value)
     fd.append('zone_type', zoneImportForm.value.zone_type)
-    fd.append('project_id', zoneImportForm.value.project_id)
+    fd.append('project_name', zoneImportForm.value.project_name)
     const result = await importZonesShp(fd)
     ElMessage.success(`SHP 导入完成：成功 ${result.imported} 条（${ZONE_TYPE_LABELS[zoneImportForm.value.zone_type]}），跳过 ${result.skipped.length} 条`)
     await loadZones()

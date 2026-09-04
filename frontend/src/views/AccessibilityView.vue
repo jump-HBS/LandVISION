@@ -199,7 +199,11 @@ let mapFetchSeq = 0
 
 async function loadMapParcels(bbox) {
   const seq = ++mapFetchSeq
-  const fc = await store.fetchParcelsGeojsonBbox(['base', 'current'], bbox || lastBbox.value || DEFAULT_BBOX)
+  const fc = await store.fetchParcelsGeojsonBbox(
+    ['base', 'current'],
+    bbox || lastBbox.value || DEFAULT_BBOX,
+    ui.currentProject?.name || undefined,
+  )
   if (seq !== mapFetchSeq) return
   if (!fc.skipped) mapParcelsGeojson.value = fc
 }
@@ -250,7 +254,9 @@ onBeforeUnmount(() => {
 
 async function loadPois() {
   try {
-    poisGeojson.value = await getPoisGeoJSON()
+    poisGeojson.value = await getPoisGeoJSON({
+      project_name: ui.currentProject?.name || undefined,
+    })
   } catch (e) {
     ElMessage.error('加载 POI 失败：' + (e?.message || '未知原因'))
   }

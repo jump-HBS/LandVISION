@@ -94,6 +94,12 @@ def _ensure_project():
     return resp.json()["id"]
 
 
+def _ensure_project_name():
+    project_id = _ensure_project()
+    project = client.get(f"/api/projects/{project_id}").json()
+    return project["name"]
+
+
 def test_root_and_health():
     resp = client.get("/")
     assert resp.status_code == 200
@@ -145,10 +151,10 @@ def test_parcels_pagination_and_filters():
     assert data["total"] == 10
     assert len(data["items"]) == 5
 
-    # 行政区划代码过滤（武汉市洪山区 420111）
-    resp = client.get("/api/parcels", params={"region_code": "420111", "page_size": 100})
-    items = resp.json()["items"]
-    assert items and all(p["region_code"] == "420111" for p in items)
+    # V5.0：项目名过滤（Demo 无归属地块视为共享数据）
+    project_name = _ensure_project_name()
+    resp = client.get("/api/parcels", params={"project_name": project_name, "page_size": 100})
+    assert resp.json()["total"] == 10
 
     # 用地性质过滤（12 大类）
     resp = client.get("/api/parcels", params={"land_use": "住宅用地", "page_size": 100})
@@ -159,7 +165,7 @@ def test_parcels_flow():
     resp = client.get("/api/parcels/geojson")
     fc = resp.json()
     assert len(fc["features"]) == 10
-    assert fc["features"][0]["properties"]["region_code"] == "420111"
+    assert "project_name" in fc["features"][0]["properties"]
 
     # 12 大类校验：非法用地性质 → 422
     resp = client.post("/api/parcels", json={
@@ -182,8 +188,7 @@ def test_parcels_flow():
     # 新建 → 更新 → 删除
     resp = client.post("/api/parcels", json={
         "parcel_code": "TEST-01", "name": "测试地块", "land_use": "耕地",
-        "district": "武汉市洪山区", "region_code": "420111",
-        "area_sqm": 10000, "far_limit": None, "height_limit": None,
+        "area_sqm": 10000,
         "geometry": {"type": "Polygon", "coordinates": [[[114.3, 30.5], [114.31, 30.5],
                                                          [114.31, 30.51], [114.3, 30.51], [114.3, 30.5]]]},
     })
@@ -199,7 +204,7 @@ def test_parcels_flow():
 
 def test_shp_import_parcels():
     """SHP zip 上传 → 解析 → 地块入库（端到端，v3.0 强制关联项目）。"""
-    project_id = _ensure_project()
+    project_name = _ensure_project_name()
     zip_bytes = _make_shp_zip()
 
     # 未关联项目 → 422（v3.0：拒绝写入全局数据池）
@@ -213,7 +218,7 @@ def test_shp_import_parcels():
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("parcels.zip", zip_bytes, "application/zip")},
-        data={"project_id": 99999},
+        data={"project_name": "不存在的项目"},
     )
     assert resp.status_code == 404
 
@@ -221,7 +226,7 @@ def test_shp_import_parcels():
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("parcels.zip", zip_bytes, "application/zip")},
-        data={"project_id": project_id, "period": "future"},
+        data={"project_name": project_name, "period": "future"},
     )
     assert resp.status_code == 422
 
@@ -229,7 +234,7 @@ def test_shp_import_parcels():
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("parcels.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111", "project_id": project_id, "period": "base"},
+        data={"project_name": project_name, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
@@ -243,7 +248,7 @@ def test_shp_import_parcels():
     assert all((i["area_sqm"] or 0) > 1000 for i in imported_items), imported_items
     # 期次与项目随导入落库
     assert all(i["period"] == "base" for i in imported_items)
-    assert all(i["project_id"] == project_id for i in imported_items)
+    assert all(i["project_name"] == project_name for i in imported_items)
 
     # 非 zip → 422
     resp = client.post(
@@ -255,12 +260,12 @@ def test_shp_import_parcels():
 
 def test_shp_import_gbk_encoding():
     """GBK 编码 DBF（天地图数据常见）自动回退解析。"""
-    project_id = _ensure_project()
+    project_name = _ensure_project_name()
     zip_bytes = _make_shp_zip(name="gbk_parcels", encoding="gbk")
     resp = client.post(
         "/api/parcels/import-shp",
         files={"file": ("gbk.zip", zip_bytes, "application/zip")},
-        data={"region_code": "420111", "project_id": project_id, "period": "base"},
+        data={"project_name": project_name, "period": "base"},
     )
     assert resp.status_code == 200
     result = resp.json()
@@ -270,14 +275,14 @@ def test_shp_import_gbk_encoding():
 
 def test_shp_import_pois():
     """v3.0：POI 点要素导入（点面分离、项目强制关联、类型容错映射）。"""
-    project_id = _ensure_project()
+    project_name = _ensure_project_name()
     point_zip = _make_point_shp_zip()
 
     # 面要素 zip 用于 POI 导入 → 全部跳过（点面分离提示）
     resp = client.post(
         "/api/pois/import",
         files={"file": ("parcels.zip", _make_shp_zip(), "application/zip")},
-        data={"project_id": project_id},
+        data={"project_name": project_name},
     )
     assert resp.status_code == 200
     result = resp.json()
@@ -293,7 +298,7 @@ def test_shp_import_pois():
     resp = client.post(
         "/api/pois/import",
         files={"file": ("pois.zip", point_zip, "application/zip")},
-        data={"project_id": 99999},
+        data={"project_name": "不存在的项目"},
     )
     assert resp.status_code == 404
 
@@ -301,12 +306,12 @@ def test_shp_import_pois():
     resp = client.post(
         "/api/pois/import",
         files={"file": ("pois.zip", point_zip, "application/zip")},
-        data={"project_id": project_id},
+        data={"project_name": project_name},
     )
     assert resp.status_code == 200
     result = resp.json()
     assert result["imported"] == 2, result
-    assert result["project_id"] == project_id
+    assert result["project_name"] == project_name
 
     pois = client.get("/api/pois", params={"page_size": 100}).json()
     by_name = {p["name"]: p for p in pois["items"]}
@@ -382,7 +387,7 @@ def test_planning():
     resp = client.get("/api/planning/check/7")
     data = resp.json()
     assert data["overall"] in ("冲突", "警告", "提示", "通过")
-    assert "district" in data["parcel"]
+    assert "project_name" in data["parcel"]
     # 判定依据：冲突/警告时必须有 message
     for d in data["details"]:
         assert d["message"]

@@ -189,11 +189,8 @@ def build_dataset():
             "parcel_code": code,
             "name": name,
             "land_use": land_use,
-            "district": DEMO_REGION_NAME,
-            "region_code": DEMO_REGION_CODE,
             "area_sqm": round(_polygon_area_sqm(ring), 2),
-            "far_limit": far,
-            "height_limit": height,
+            "project_name": "LandVISION 演示项目",
             "created_at": created,
             "geometry": {"type": "Polygon", "coordinates": [ring]},
         })
@@ -273,12 +270,10 @@ def render_business_sql(parcels, pois, zones, changes):
     lines.append("-- ---------- 10 个示例地块（12 大类用地覆盖 10 类） ----------")
     for p in parcels:
         lines.append(
-            "INSERT INTO parcels (parcel_code, name, land_use, district, region_code, area_sqm, "
-            "far_limit, height_limit, created_at, geom) VALUES "
-            f"('{p['parcel_code']}', '{p['name']}', '{p['land_use']}', '{p['district']}', "
-            f"'{p['region_code']}', {p['area_sqm']}, "
-            f"{p['far_limit'] if p['far_limit'] is not None else 'NULL'}, "
-            f"{p['height_limit'] if p['height_limit'] is not None else 'NULL'}, "
+            "INSERT INTO parcels (parcel_code, name, land_use, area_sqm, "
+            "project_name, created_at, geom) VALUES "
+            f"('{p['parcel_code']}', '{p['name']}', '{p['land_use']}', {p['area_sqm']}, "
+            f"'{p.get('project_name') or 'LandVISION 演示项目'}', "
             f"'{p['created_at']}', ST_GeomFromText('{_wkt(p['geometry'])}', 4326));"
         )
     lines.append("")
@@ -366,9 +361,8 @@ def parcel_features():
     return [
         {"type": "Feature", "geometry": p["geometry"], "properties": {
             "id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
-            "land_use": p["land_use"], "district": p["district"],
-            "region_code": p["region_code"], "area_sqm": p["area_sqm"],
-            "far_limit": p["far_limit"], "height_limit": p["height_limit"],
+            "land_use": p["land_use"], "area_sqm": p["area_sqm"],
+            "project_name": p.get("project_name"),
             "created_at": p["created_at"],
         }} for p in PARCELS
     ]
@@ -378,6 +372,7 @@ def poi_features():
     return [
         {"type": "Feature", "geometry": p["geometry"], "properties": {
             "id": p["id"], "name": p["name"], "poi_type": p["poi_type"],
+            "project_name": p.get("project_name"),
         }} for p in POIS
     ]
 

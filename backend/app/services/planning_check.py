@@ -139,36 +139,50 @@ def _zone_out(z: dict) -> dict:
     return {"id": z["id"], "zone_name": z["zone_name"], "zone_type": z["zone_type"],
             "zone_type_label": ZONE_TYPE_LABELS.get(z["zone_type"], z["zone_type"]),
             "zone_level": z.get("zone_level"), "control_desc": z.get("control_desc"),
-            "project_id": z.get("project_id"), "period": z.get("period"),
+            "project_name": z.get("project_name"), "period": z.get("period"),
             "locked": z.get("locked", False)}
 
 
-def list_zones(db=None) -> list[dict]:
+def list_zones(db=None, project_name: Optional[str] = None) -> list[dict]:
     if is_demo():
-        return [_zone_out(z) for z in demo_data.PLANNING_ZONES]
+        return [_zone_out(z) for z in demo_data.PLANNING_ZONES
+                if project_name is None
+                or not z.get("project_name")
+                or z.get("project_name") == project_name]
     from ..models import PlanningZone
+    q = db.query(PlanningZone)
+    if project_name:
+        q = q.filter(PlanningZone.project_name == project_name)
     return [
         {"id": r.id, "zone_name": r.zone_name, "zone_type": r.zone_type,
          "zone_type_label": ZONE_TYPE_LABELS.get(r.zone_type, r.zone_type),
          "zone_level": r.zone_level, "control_desc": r.control_desc,
-         "project_id": r.project_id, "period": r.period, "locked": r.locked}
-        for r in db.query(PlanningZone).all()
+         "project_name": r.project_name, "period": r.period, "locked": r.locked}
+        for r in q.all()
     ]
 
 
-def zones_geojson(db=None) -> dict:
+def zones_geojson(db=None, project_name: Optional[str] = None) -> dict:
     if is_demo():
-        return demo_data.zones_geojson()
+        fc = demo_data.zones_geojson()
+        if project_name:
+            fc["features"] = [f for f in fc["features"]
+                              if not f["properties"].get("project_name")
+                              or f["properties"].get("project_name") == project_name]
+        return fc
     from geoalchemy2.shape import to_shape
     from shapely.geometry import mapping
     from ..models import PlanningZone
+    q = db.query(PlanningZone)
+    if project_name:
+        q = q.filter(PlanningZone.project_name == project_name)
     features = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)), "properties": {
             "id": r.id, "zone_name": r.zone_name, "zone_type": r.zone_type,
             "zone_type_label": ZONE_TYPE_LABELS.get(r.zone_type, r.zone_type),
             "zone_level": r.zone_level, "control_desc": r.control_desc,
-            "project_id": r.project_id, "locked": r.locked}}
-        for r in db.query(PlanningZone).all()
+             "project_name": r.project_name, "locked": r.locked}}
+        for r in q.all()
     ]
     return {"type": "FeatureCollection", "features": features}
 
@@ -187,7 +201,7 @@ def create_zone(data: dict, db=None) -> dict:
             "zone_type": zone_type,
             "zone_level": data.get("zone_level"),
             "control_desc": data.get("control_desc"),
-            "project_id": data.get("project_id"),
+            "project_name": data.get("project_name"),
             "period": data.get("period"),
             "locked": data.get("locked", False),
             "area_sqm": None,
@@ -203,7 +217,7 @@ def create_zone(data: dict, db=None) -> dict:
         zone_type=zone_type,
         zone_level=data.get("zone_level"),
         control_desc=data.get("control_desc"),
-        project_id=data.get("project_id"),
+        project_name=data.get("project_name"),
         period=data.get("period"),
         locked=data.get("locked", False),
         geom=ST_GeomFromGeoJSON(json.dumps(data["geometry"])),
@@ -212,9 +226,9 @@ def create_zone(data: dict, db=None) -> dict:
     db.commit()
     db.refresh(row)
     return {"id": row.id, "zone_name": row.zone_name, "zone_type": row.zone_type,
-            "zone_type_label": ZONE_TYPE_LABELS[row.zone_type],
-            "zone_level": row.zone_level, "control_desc": row.control_desc,
-            "project_id": row.project_id, "period": row.period, "locked": row.locked}
+             "zone_type_label": ZONE_TYPE_LABELS[row.zone_type],
+             "zone_level": row.zone_level, "control_desc": row.control_desc,
+             "project_name": row.project_name, "period": row.period, "locked": row.locked}
 
 
 def delete_zone(zone_id: int, db=None) -> bool:
@@ -239,12 +253,12 @@ def delete_zone(zone_id: int, db=None) -> bool:
 
 def import_zones_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
                           type_field: str = None, zone_type: str = None,
-                          project_id: Optional[int] = None,
+                          project_name: Optional[str] = None,
                           period: Optional[str] = None) -> dict:
     """SHP 导入三区三线控制线（边界由用户导入，类型统一指定或按字段容错映射）。"""
     from .shp_import import _pick_field, parse_shp_zip, require_project
 
-    require_project(db, project_id)
+    require_project(db, project_name)
     parsed = parse_shp_zip(zip_bytes)
     fields = parsed["fields"]
     name_f = _pick_field(fields, ["name", "NAME", "XMMC", "MC", "zone_name"], name_field)
@@ -290,7 +304,7 @@ def import_zones_from_zip(zip_bytes: bytes, db=None, name_field: str = None,
                     "zone_type": ztype,
                     "zone_level": None,
                     "control_desc": f"SHP 导入（{ZONE_TYPE_LABELS[ztype]}）",
-                    "project_id": project_id,
+                     "project_name": project_name,
                     "period": period,
                     "geometry": poly,
                 }, db)
@@ -344,8 +358,8 @@ def check_parcel(parcel_id: int, db=None) -> Optional[dict]:
         result = _check_with_geom(parcel["geometry"], parcel["land_use"],
                                   demo_data.PLANNING_ZONES)
         result["parcel"] = {k: parcel.get(k) for k in (
-            "id", "parcel_code", "name", "land_use", "district", "area_sqm",
-            "far_limit", "height_limit", "period", "project_id", "locked")}
+            "id", "parcel_code", "name", "land_use", "area_sqm",
+            "period", "project_name", "locked")}
         return result
 
     from geoalchemy2.functions import ST_Intersection, ST_Area, ST_Transform, ST_Intersects
@@ -380,11 +394,8 @@ def check_parcel(parcel_id: int, db=None) -> Optional[dict]:
         "parcel": {
             "id": parcel_row.id, "parcel_code": parcel_row.parcel_code,
             "name": parcel_row.name, "land_use": parcel_row.land_use,
-            "district": parcel_row.district,
             "area_sqm": parcel_area,
-            "far_limit": float(parcel_row.far_limit) if parcel_row.far_limit else None,
-            "height_limit": float(parcel_row.height_limit) if parcel_row.height_limit else None,
-            "period": parcel_row.period, "project_id": parcel_row.project_id,
+            "period": parcel_row.period, "project_name": parcel_row.project_name,
             "locked": parcel_row.locked,
         },
     }
@@ -429,11 +440,21 @@ def check_geometry(geometry: dict, land_use: str = "其他土地", db=None) -> d
 def review_occupancy(db=None, scope: Optional[dict] = None,
                      zone_ids: Optional[list] = None,
                      parcel_ids: Optional[list] = None,
-                     project_id: Optional[int] = None) -> dict:
+                     project_id: Optional[int] = None,
+                     project_name: Optional[str] = None) -> dict:
     """计算所选地块占用各类型控制线的面积（规则矩阵判定 + 结果持久化）。"""
+    if project_id and not project_name:
+        from .projects import get_project
+        project = get_project(project_id, db)
+        project_name = project["name"] if project else None
     if is_demo():
         parcels = list(demo_data.PARCELS)
         zones = list(demo_data.PLANNING_ZONES)
+        if project_name:
+            parcels = [p for p in parcels
+                       if not p.get("project_name") or p.get("project_name") == project_name]
+            zones = [z for z in zones
+                     if not z.get("project_name") or z.get("project_name") == project_name]
         if scope:
             scope_g = shape(scope)
             parcels = [p for p in parcels if _geom_in_scope(p["geometry"], scope_g)]
@@ -454,6 +475,9 @@ def review_occupancy(db=None, scope: Optional[dict] = None,
         from ..models import Parcel, PlanningZone
         parcel_query = db.query(Parcel)
         zone_query = db.query(PlanningZone)
+        if project_name:
+            parcel_query = parcel_query.filter(Parcel.project_name == project_name)
+            zone_query = zone_query.filter(PlanningZone.project_name == project_name)
         if zone_ids:
             zone_query = zone_query.filter(PlanningZone.id.in_(zone_ids))
         if parcel_ids:

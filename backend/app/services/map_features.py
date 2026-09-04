@@ -18,36 +18,36 @@ FEATURE_TYPES = ("point", "line", "polygon")
 def _feature_out(f: dict) -> dict:
     return {
         "id": f["id"], "name": f["name"], "feature_type": f["feature_type"],
-        "category": f.get("category"), "project_id": f.get("project_id"),
+        "category": f.get("category"), "project_name": f.get("project_name"),
         "locked": f.get("locked", False), "properties": f.get("properties_json"),
         "geometry": f.get("geometry"),
     }
 
 
-def list_features(db=None, project_id: Optional[int] = None) -> list:
+def list_features(db=None, project_name: Optional[str] = None) -> list:
     if is_demo():
         return [_feature_out(f) for f in demo_data.MAP_FEATURES
-                if project_id is None or f.get("project_id") == project_id]
+                if project_name is None or f.get("project_name") == project_name]
     from ..models import MapFeature
     from geoalchemy2.shape import to_shape
     q = db.query(MapFeature)
-    if project_id:
-        q = q.filter(MapFeature.project_id == project_id)
+    if project_name:
+        q = q.filter(MapFeature.project_name == project_name)
     return [
         {"id": r.id, "name": r.name, "feature_type": r.feature_type,
-         "category": r.category, "project_id": r.project_id, "locked": r.locked,
+         "category": r.category, "project_name": r.project_name, "locked": r.locked,
          "properties": r.properties_json, "geometry": mapping(to_shape(r.geom))}
         for r in q.order_by(MapFeature.id).all()
     ]
 
 
-def features_geojson(db=None, project_id: Optional[int] = None) -> dict:
+def features_geojson(db=None, project_name: Optional[str] = None) -> dict:
     features = [
         {"type": "Feature", "geometry": f["geometry"], "properties": {
             "id": f["id"], "name": f["name"], "feature_type": f["feature_type"],
-            "category": f["category"], "project_id": f["project_id"],
+            "category": f["category"], "project_name": f["project_name"],
             "locked": f["locked"], "properties": f["properties"]}}
-        for f in list_features(db, project_id=project_id)
+        for f in list_features(db, project_name=project_name)
     ]
     return {"type": "FeatureCollection", "features": features, "count": len(features)}
 
@@ -62,7 +62,7 @@ def create_feature(data: dict, db=None) -> dict:
         pid = demo_data.next_id(demo_data.MAP_FEATURES)
         new = {
             "id": pid, "name": data["name"], "feature_type": data["feature_type"],
-            "category": data.get("category"), "project_id": data.get("project_id"),
+            "category": data.get("category"), "project_name": data.get("project_name"),
             "properties_json": data.get("properties") or {}, "locked": False,
             "geometry": data["geometry"],
         }
@@ -72,7 +72,7 @@ def create_feature(data: dict, db=None) -> dict:
     from ..models import MapFeature
     row = MapFeature(
         name=data["name"], feature_type=data["feature_type"],
-        category=data.get("category"), project_id=data.get("project_id"),
+        category=data.get("category"), project_name=data.get("project_name"),
         properties_json=data.get("properties") or {},
         geom=ST_GeomFromGeoJSON(json.dumps(data["geometry"])),
     )
@@ -80,7 +80,7 @@ def create_feature(data: dict, db=None) -> dict:
     db.commit()
     db.refresh(row)
     return {"id": row.id, "name": row.name, "feature_type": row.feature_type,
-            "category": row.category, "project_id": row.project_id,
+            "category": row.category, "project_name": row.project_name,
             "locked": row.locked, "properties": row.properties_json}
 
 

@@ -70,11 +70,15 @@ def _clip_area_expr(geom_col, scope_json):
         ST_Intersection(geom_col, ST_GeomFromGeoJSON(scope_json)), 3857))
 
 
-def _land_use_stats(db=None, scope: Optional[dict] = None) -> list[dict]:
+def _land_use_stats(db=None, scope: Optional[dict] = None,
+                    project_name: Optional[str] = None) -> list[dict]:
     """v3.0：按范围统计各地类（跨界地块面积裁剪为范围内部分）。"""
     scope_g = _scope_geom(scope)
     if is_demo():
         src = _filter_demo(demo_data.PARCELS, scope_g)
+        if project_name:
+            src = [p for p in src
+                   if not p.get("project_name") or p.get("project_name") == project_name]
         agg: dict[str, dict] = {}
         for p in src:
             entry = agg.setdefault(p["land_use"], {"count": 0, "area_sqm": 0.0})
@@ -88,6 +92,8 @@ def _land_use_stats(db=None, scope: Optional[dict] = None) -> list[dict]:
     from sqlalchemy import func
     from ..models import Parcel
     query = db.query(Parcel.land_use, func.count(Parcel.id))
+    if project_name:
+        query = query.filter(Parcel.project_name == project_name)
     if scope:
         scope_json = json.dumps(scope)
         query = query.filter(_scope_filter_expr(Parcel.geom, scope_json))
@@ -105,33 +111,8 @@ def _land_use_stats(db=None, scope: Optional[dict] = None) -> list[dict]:
 
 
 def _district_stats(db=None, scope: Optional[dict] = None) -> list[dict]:
-    scope_g = _scope_geom(scope)
-    if is_demo():
-        agg: dict[str, dict] = {}
-        for p in _filter_demo(demo_data.PARCELS, scope_g):
-            d = p.get("district") or p.get("region_code") or "未分区"
-            entry = agg.setdefault(d, {"count": 0, "area_sqm": 0.0})
-            entry["count"] += 1
-            entry["area_sqm"] += _clip_area_demo(p["geometry"], scope_g, p["area_sqm"])
-        return [
-            {"district": k, "count": v["count"], "area_sqm": round(v["area_sqm"], 2)}
-            for k, v in sorted(agg.items(), key=lambda kv: -kv[1]["count"])
-        ]
-    from sqlalchemy import func
-    from ..models import Parcel
-    query = db.query(Parcel.district, func.count(Parcel.id))
-    if scope:
-        scope_json = json.dumps(scope)
-        query = query.filter(_scope_filter_expr(Parcel.geom, scope_json))
-        query = query.add_columns(func.coalesce(
-            func.sum(_clip_area_expr(Parcel.geom, scope_json)), 0))
-    else:
-        query = query.add_columns(func.coalesce(func.sum(Parcel.area_sqm), 0))
-    rows = query.group_by(Parcel.district).all()
-    return [
-        {"district": r[0] or "未分区", "count": r[1], "area_sqm": round(float(r[2] or 0), 2)}
-        for r in rows
-    ]
+    # V5.0 已删除 district/region_code 冗余字段，行政区分布不再从地块表计算。
+    return []
 
 
 def _transition_change_area(rows: list) -> float:
@@ -149,7 +130,8 @@ def _transition_change_area(rows: list) -> float:
 # 持久化结果聚合
 # ---------------------------------------------------------------------------
 
-def _transition_from_patches(db, project_id: int, scope) -> dict:
+def _transition_from_patches(db, project_id: int, scope,
+                             project_name: Optional[str] = None) -> dict:
     """从 land_change_patches 聚合转移矩阵概览（持久化结果优先，严格范围裁剪）。"""
     from collections import defaultdict
     scope_g = _scope_geom(scope)
@@ -183,8 +165,8 @@ def _transition_from_patches(db, project_id: int, scope) -> dict:
             agg[key] += float(p.get("area_sqm") or 0)
     rows = [{"from_use": k[0], "to_use": k[1], "area_sqm": round(v, 2)}
             for k, v in sorted(agg.items())]
-    base = _count_parcels(db, "base", scope)
-    current = _count_parcels(db, "current", scope)
+    base = _count_parcels(db, "base", scope, project_name)
+    current = _count_parcels(db, "current", scope, project_name)
     return {
         "has_data": True,
         "from_persisted": True,
@@ -198,15 +180,22 @@ def _transition_from_patches(db, project_id: int, scope) -> dict:
     }
 
 
-def _count_parcels(db, period: str, scope) -> int:
+def _count_parcels(db, period: str, scope,
+                   project_name: Optional[str] = None) -> int:
     scope_g = _scope_geom(scope)
     if is_demo():
+        src = _filter_demo(demo_data.PARCELS, scope_g)
+        if project_name:
+            src = [p for p in src
+                   if not p.get("project_name") or p.get("project_name") == project_name]
         # v4.0：期次缺省视为基期（与数据库列默认值一致）
-        return sum(1 for p in _filter_demo(demo_data.PARCELS, scope_g)
+        return sum(1 for p in src
                    if (p.get("period") or "base") == period)
     from sqlalchemy import func
     from ..models import Parcel
     q = db.query(func.count(Parcel.id)).filter(Parcel.period == period)
+    if project_name:
+        q = q.filter(Parcel.project_name == project_name)
     if scope:
         q = q.filter(_scope_filter_expr(Parcel.geom, json.dumps(scope)))
     return q.scalar() or 0
@@ -230,7 +219,8 @@ def _suitability_from_grids(db, project_id: int, scope) -> Optional[dict]:
     }
 
 
-def _accessibility_from_results(db, project_id: int, scope) -> Optional[dict]:
+def _accessibility_from_results(db, project_id: int, scope,
+                                project_name: Optional[str] = None) -> Optional[dict]:
     rows = list_accessibility(db, project_id=project_id)
     if not rows:
         return None
@@ -238,7 +228,8 @@ def _accessibility_from_results(db, project_id: int, scope) -> Optional[dict]:
     if scope is not None:
         # v3.0 严格范围聚合：给定范围时按范围实时复算（只读，不覆盖持久化结果）
         a = accessibility_analyze(db, facility_types=r.get("facility_types") or [],
-                                  radius_m=r["radius_m"], scope=scope, project_id=None)
+                                  radius_m=r["radius_m"], scope=scope,
+                                  project_id=None, project_name=project_name)
         return {
             "from_persisted": True,
             "recomputed_for_scope": True,
@@ -252,7 +243,7 @@ def _accessibility_from_results(db, project_id: int, scope) -> Optional[dict]:
             "gaps": a["gaps"],
         }
     gaps = []
-    parcels = _load_parcels_dict(db)
+    parcels = _load_parcels_dict(db, project_name=project_name)
     for pid in r.get("gap_parcel_ids") or []:
         p = parcels.get(pid)
         if p:
@@ -272,14 +263,17 @@ def _accessibility_from_results(db, project_id: int, scope) -> Optional[dict]:
     }
 
 
-def _planning_from_results(db, project_id: int, scope) -> Optional[dict]:
+def _planning_from_results(db, project_id: int, scope,
+                           project_name: Optional[str] = None) -> Optional[dict]:
     results = list_check_results(db, project_id=project_id)
     if not results:
         return None
     scope_g = _scope_geom(scope)
     # v3.0：严格范围过滤 —— 仅保留地块与控制线都在范围内的体检记录，重叠面积裁剪到范围内
-    parcels = _load_parcels_dict(db, with_geometry=scope_g is not None, scope=scope)
-    zones = _load_zones_dict(db, with_geometry=scope_g is not None, scope=scope)
+    parcels = _load_parcels_dict(db, with_geometry=scope_g is not None, scope=scope,
+                                 project_name=project_name)
+    zones = _load_zones_dict(db, with_geometry=scope_g is not None, scope=scope,
+                             project_name=project_name)
     by_level = {"通过": 0, "提示": 0, "警告": 0, "冲突": 0}
     totals = {}
     rows_map = {}
@@ -336,9 +330,13 @@ def _clip_planning_area(parcel: dict, zone: dict, scope_g, fallback: float) -> f
 
 
 def _load_parcels_dict(db, with_geometry: bool = False,
-                       scope: Optional[dict] = None) -> dict:
+                       scope: Optional[dict] = None,
+                       project_name: Optional[str] = None) -> dict:
     if is_demo():
         src = _filter_demo(demo_data.PARCELS, _scope_geom(scope)) if scope else demo_data.PARCELS
+        if project_name:
+            src = [p for p in src
+                   if not p.get("project_name") or p.get("project_name") == project_name]
         return {p["id"]: {"id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
                           "land_use": p["land_use"],
                           **({"geometry": p["geometry"]} if with_geometry else {})}
@@ -346,6 +344,8 @@ def _load_parcels_dict(db, with_geometry: bool = False,
     from geoalchemy2.shape import to_shape
     from ..models import Parcel
     q = db.query(Parcel)
+    if project_name:
+        q = q.filter(Parcel.project_name == project_name)
     if scope:
         q = q.filter(_scope_filter_expr(Parcel.geom, json.dumps(scope)))
     return {r.id: {"id": r.id, "parcel_code": r.parcel_code, "name": r.name,
@@ -355,15 +355,21 @@ def _load_parcels_dict(db, with_geometry: bool = False,
 
 
 def _load_zones_dict(db, with_geometry: bool = False,
-                     scope: Optional[dict] = None) -> dict:
+                     scope: Optional[dict] = None,
+                     project_name: Optional[str] = None) -> dict:
     if is_demo():
         src = _filter_demo(demo_data.PLANNING_ZONES, _scope_geom(scope)) if scope else demo_data.PLANNING_ZONES
+        if project_name:
+            src = [z for z in src
+                   if not z.get("project_name") or z.get("project_name") == project_name]
         return {z["id"]: {"id": z["id"], "zone_name": z["zone_name"], "zone_type": z["zone_type"],
                           **({"geometry": z["geometry"]} if with_geometry else {})}
                 for z in src}
     from geoalchemy2.shape import to_shape
     from ..models import PlanningZone
     q = db.query(PlanningZone)
+    if project_name:
+        q = q.filter(PlanningZone.project_name == project_name)
     if scope:
         q = q.filter(_scope_filter_expr(PlanningZone.geom, json.dumps(scope)))
     return {r.id: {"id": r.id, "zone_name": r.zone_name, "zone_type": r.zone_type,
@@ -377,9 +383,12 @@ def _load_zones_dict(db, with_geometry: bool = False,
 
 def collect_dashboard(db=None, project_id: Optional[int] = None,
                       scope: Optional[dict] = None,
-                      scope_label: Optional[str] = None) -> dict:
+                      scope_label: Optional[str] = None,
+                      project_name: Optional[str] = None) -> dict:
     """按分析项目与范围聚合全模块数据（持久化结果优先，实时计算兜底）。"""
     project = get_project(project_id, db) if project_id else None
+    if project and not project_name:
+        project_name = project["name"]
     if project and project.get("scope_geojson") and scope is None:
         scope = project["scope_geojson"]
     if scope_label is None:
@@ -390,6 +399,13 @@ def collect_dashboard(db=None, project_id: Optional[int] = None,
         parcels = _filter_demo(demo_data.PARCELS, scope_g)
         pois = _filter_demo(demo_data.POIS, scope_g)
         zones = _filter_demo(demo_data.PLANNING_ZONES, scope_g)
+        if project_name:
+            parcels = [p for p in parcels
+                       if not p.get("project_name") or p.get("project_name") == project_name]
+            pois = [p for p in pois
+                    if not p.get("project_name") or p.get("project_name") == project_name]
+            zones = [z for z in zones
+                     if not z.get("project_name") or z.get("project_name") == project_name]
         parcel_total = len(parcels)
         area_total = sum(_clip_area_demo(p["geometry"], scope_g, p["area_sqm"]) for p in parcels)
         poi_total = len(pois)
@@ -401,39 +417,47 @@ def collect_dashboard(db=None, project_id: Optional[int] = None,
 
         parcel_q = db.query(func.count(Parcel.id))
         area_col = func.coalesce(func.sum(Parcel.area_sqm), 0)
+        area_q = db.query(area_col)
         poi_q = db.query(func.count(Poi.id))
         zone_q = db.query(func.count(PlanningZone.id))
+        if project_name:
+            parcel_q = parcel_q.filter(Parcel.project_name == project_name)
+            area_q = area_q.filter(Parcel.project_name == project_name)
+            poi_q = poi_q.filter(Poi.project_name == project_name)
+            zone_q = zone_q.filter(PlanningZone.project_name == project_name)
         if scope:
             scope_json = json.dumps(scope)
             parcel_q = parcel_q.filter(_scope_filter_expr(Parcel.geom, scope_json))
+            area_q = area_q.filter(_scope_filter_expr(Parcel.geom, scope_json))
             poi_q = poi_q.filter(_scope_filter_expr(Poi.geom, scope_json))
             zone_q = zone_q.filter(_scope_filter_expr(PlanningZone.geom, scope_json))
             # v3.0：跨界地块面积裁剪为范围内部分
             area_col = func.coalesce(func.sum(_clip_area_expr(Parcel.geom, scope_json)), 0)
         parcel_total = parcel_q.scalar() or 0
-        area_total = db.query(area_col).scalar() or 0
+        area_total = area_q.scalar() or 0
         poi_total = poi_q.scalar() or 0
         zone_total = zone_q.scalar() or 0
         region_total = db.query(func.count(Region.id)).scalar() or 0
 
-    land_use = _land_use_stats(db, scope)
+    land_use = _land_use_stats(db, scope, project_name)
     districts = _district_stats(db, scope)
 
     # 各模块：持久化结果优先（v3.0 全部按范围严格过滤/裁剪）
-    transition = _transition_from_patches(db, project_id, scope) if project_id else None
+    transition = _transition_from_patches(db, project_id, scope, project_name) if project_id else None
     if not transition:
-        t = transition_matrix(db, scope=scope, project_id=project_id)
+        base_count = _count_parcels(db, "base", scope, project_name)
+        current_count = _count_parcels(db, "current", scope, project_name)
         transition = {
-            "has_data": bool(t["base_count"] and t["current_count"]),
+            "has_data": bool(base_count and current_count),
             "from_persisted": False,
-            "hint": t.get("hint"),
-            "base_count": t["base_count"],
-            "current_count": t["current_count"],
-            "change_count": len(t["changes_geojson"]["features"]),
+            "hint": "尚未执行转移矩阵分析（模块一）",
+            "base_count": base_count,
+            "current_count": current_count,
+            "change_count": 0,
             "conflict_patch_count": 0,
-            "change_area_sqm": _transition_change_area(t["rows"]),
-            "rows": t["rows"],
-            "summary": t["summary"],
+            "change_area_sqm": 0,
+            "rows": [],
+            "summary": [],
         }
 
     suitability = _suitability_from_grids(db, project_id, scope) if project_id else None
@@ -441,31 +465,26 @@ def collect_dashboard(db=None, project_id: Optional[int] = None,
         suitability = {"from_persisted": False, "cell_total": 0, "stats": [],
                        "hint": "尚未执行适宜性评价（模块二）"}
 
-    accessibility = _accessibility_from_results(db, project_id, scope) if project_id else None
+    accessibility = _accessibility_from_results(db, project_id, scope, project_name) if project_id else None
     if accessibility is None:
-        a = accessibility_analyze(db, facility_types=[], radius_m=800, scope=scope)
         accessibility = {
             "from_persisted": False,
-            "radius_m": a["radius_m"], "facility_types": [],
-            "parcel_total": a["parcel_total"], "covered_count": a["covered_count"],
-            "coverage_rate": a["coverage_rate"], "gap_count": a["gap_count"],
-            "gap_parcel_ids": a.get("gap_parcel_ids", []), "gaps": a["gaps"],
+            "radius_m": 800, "facility_types": [],
+            "parcel_total": parcel_total, "covered_count": 0,
+            "coverage_rate": 0, "gap_count": 0,
+            "gap_parcel_ids": [], "gaps": [],
+            "hint": "尚未执行可达性分析（模块三）",
         }
 
-    planning = _planning_from_results(db, project_id, scope) if project_id else None
+    planning = _planning_from_results(db, project_id, scope, project_name) if project_id else None
     if planning is None:
-        r = review_occupancy(db, scope=scope, project_id=project_id)
         planning = {
             "from_persisted": False,
             "by_level": {}, "conflict_count": 0,
-            "review_rows": r["rows"], "review_totals": r["totals"],
-            "review_zone_count": r["zone_count"], "review_parcel_count": r["parcel_count"],
+            "review_rows": [], "review_totals": [],
+            "review_zone_count": zone_total, "review_parcel_count": 0,
+            "hint": "尚未执行三区三线体检（模块四）",
         }
-        by = {"通过": 0, "提示": 0, "警告": 0, "冲突": 0}
-        for row in r["rows"]:
-            by[row["overall"]] = by.get(row["overall"], 0) + 1
-        planning["by_level"] = by
-        planning["conflict_count"] = by["冲突"]
 
     progress = {
         "transition": bool(transition["has_data"]),

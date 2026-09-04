@@ -12,6 +12,7 @@ import json
 import math
 from typing import Optional
 
+from sqlalchemy import text
 from shapely.geometry import box, mapping, shape
 from shapely.ops import unary_union
 
@@ -100,9 +101,9 @@ def _demo_find(items, item_id):
 
 
 def list_parcels(db=None, bbox: Optional[str] = None, land_use: Optional[str] = None,
-                 q: Optional[str] = None, district: Optional[str] = None,
-                 region_code: Optional[str] = None, period: Optional[str] = None,
-                 page: int = 1, page_size: int = 20) -> dict:
+                 q: Optional[str] = None, project_name: Optional[str] = None,
+                 period: Optional[str] = None, page: int = 1,
+                 page_size: int = 20) -> dict:
     """地块分页列表（不含几何，供表格展示）。bbox 非空时为视野范围查询。
 
     period：按期次过滤（base/current/None=全部）。
@@ -118,9 +119,7 @@ def list_parcels(db=None, bbox: Optional[str] = None, land_use: Optional[str] = 
                 continue
             if land_use and p["land_use"] != land_use:
                 continue
-            if district and p.get("district") != district:
-                continue
-            if region_code and p.get("region_code") != region_code:
+            if project_name and p.get("project_name") and p.get("project_name") != project_name:
                 continue
             # v4.0：期次缺省视为基期（与数据库列默认值一致），勾选「基期」即可显示
             if period and (p.get("period") or "base") != period:
@@ -142,21 +141,22 @@ def list_parcels(db=None, bbox: Optional[str] = None, land_use: Optional[str] = 
         )
     if land_use:
         query = query.filter(Parcel.land_use == land_use)
-    if district:
-        query = query.filter(Parcel.district == district)
-    if region_code:
-        query = query.filter(Parcel.region_code == region_code)
+    if project_name:
+        query = query.filter(Parcel.project_name == project_name)
     if period:
         query = query.filter(Parcel.period == period)
     if q:
-        query = query.filter(Parcel.name.contains(q))
+        from sqlalchemy import or_
+        query = query.filter(or_(Parcel.name.contains(q),
+                                 Parcel.parcel_code.contains(q)))
     total = query.count()
     rows = query.order_by(Parcel.id).offset((page - 1) * page_size).limit(page_size).all()
     return paginated([_parcel_summary_row(r) for r in rows], page, page_size, total)
 
 
 def parcels_geojson(db=None, bbox: Optional[str] = None,
-                    period: Optional[str] = None) -> dict:
+                    period: Optional[str] = None,
+                    project_name: Optional[str] = None) -> dict:
     """地块 GeoJSON FeatureCollection（地图渲染用，可按期次过滤）。
 
     v4.0.3：返回要素数封顶（settings.max_geojson_features），超出部分截断并
@@ -165,6 +165,10 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
     cap = settings.max_geojson_features
     if is_demo():
         features = demo_data.parcel_features()
+        if project_name:
+            features = [f for f in features
+                        if not f["properties"].get("project_name")
+                        or f["properties"].get("project_name") == project_name]
         # v4.0：期次缺省视为基期（与数据库列默认值一致）
         if period:
             features = [f for f in features
@@ -178,6 +182,8 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
     from ..models import Parcel
     from geoalchemy2.functions import ST_Intersects, ST_MakeEnvelope
     query = db.query(Parcel)
+    if project_name:
+        query = query.filter(Parcel.project_name == project_name)
     if period:
         query = query.filter(Parcel.period == period)
     if bbox:
@@ -190,6 +196,54 @@ def parcels_geojson(db=None, bbox: Optional[str] = None,
     features = [_parcel_feature_row(r) for r in rows]
     return {"type": "FeatureCollection", "features": features,
             "total": total, "truncated": total > cap}
+
+
+def parcels_mvt(z: int, x: int, y: int, db=None,
+                project_name: Optional[str] = None,
+                periods: Optional[str] = None) -> bytes:
+    """返回地块 Mapbox Vector Tile（POSTGIS 模式，ST_AsMVT）。"""
+    if is_demo():
+        # Demo 模式保留 GeoJSON 降级，矢量瓦片接口返回空 MVT。
+        return b""
+
+    sql = """
+        SELECT ST_AsMVT(tile, 'parcels', 4096, 'geom', 'id') AS mvt
+        FROM (
+            SELECT id,
+                   parcel_code,
+                   name,
+                   land_use,
+                   period,
+                   locked,
+                   COALESCE(area_sqm, 0)::float8 AS area_sqm,
+                   ST_AsMVTGeom(
+                       ST_Transform(geom, 3857),
+                       ST_TileEnvelope(:z, :x, :y),
+                       4096,
+                       64,
+                       true
+                   ) AS geom
+            FROM parcels
+            WHERE geom && ST_Transform(ST_TileEnvelope(:z, :x, :y), 4326)
+              AND (:project_name IS NULL OR project_name = :project_name)
+              AND (
+                    COALESCE(:periods, '') = ''
+                    OR period = ANY(string_to_array(:periods, ','))
+              )
+        ) AS tile
+        WHERE geom IS NOT NULL
+    """
+    row = db.execute(
+        text(sql),
+        {
+            "z": z,
+            "x": x,
+            "y": y,
+            "project_name": project_name,
+            "periods": periods or "",
+        },
+    ).fetchone()
+    return bytes(row[0]) if row and row[0] is not None else b""
 
 
 def get_parcel(parcel_id: int, db=None) -> Optional[dict]:
@@ -225,13 +279,9 @@ def create_parcel(data: dict, db=None) -> dict:
             "parcel_code": data["parcel_code"],
             "name": data["name"],
             "land_use": data["land_use"],
-            "district": data.get("district"),
-            "region_code": data.get("region_code"),
             "area_sqm": area,
-            "far_limit": data.get("far_limit"),
-            "height_limit": data.get("height_limit"),
             "period": data.get("period") or "base",
-            "project_id": data.get("project_id"),
+            "project_name": data.get("project_name"),
             "locked": data.get("locked", False),
             "created_at": None,
             "geometry": data["geometry"],
@@ -247,13 +297,9 @@ def create_parcel(data: dict, db=None) -> dict:
         parcel_code=data["parcel_code"],
         name=data["name"],
         land_use=data["land_use"],
-        district=data.get("district"),
-        region_code=data.get("region_code"),
         area_sqm=area,
-        far_limit=data.get("far_limit"),
-        height_limit=data.get("height_limit"),
         period=data.get("period") or "base",
-        project_id=data.get("project_id"),
+        project_name=data.get("project_name"),
         locked=data.get("locked", False),
         geom=ST_GeomFromGeoJSON(json.dumps(data["geometry"])),
     )
@@ -275,9 +321,8 @@ def update_parcel(parcel_id: int, data: dict, db=None) -> Optional[dict]:
         p = _demo_find(demo_data.PARCELS, parcel_id)
         if not p:
             return None
-        for key in ("name", "land_use", "district", "region_code",
-                    "area_sqm", "far_limit", "height_limit", "geometry",
-                    "period", "project_id", "locked"):
+        for key in ("name", "land_use", "area_sqm", "geometry",
+                    "period", "project_name", "locked"):
             if data.get(key) is not None:
                 p[key] = data[key]
         return dict(p)
@@ -287,9 +332,8 @@ def update_parcel(parcel_id: int, data: dict, db=None) -> Optional[dict]:
     row = db.query(Parcel).filter(Parcel.id == parcel_id).first()
     if not row:
         return None
-    for key in ("name", "land_use", "district", "region_code",
-                "area_sqm", "far_limit", "height_limit",
-                "period", "project_id", "locked"):
+    for key in ("name", "land_use", "area_sqm",
+                "period", "project_name", "locked"):
         if data.get(key) is not None:
             setattr(row, key, data[key])
     if data.get("geometry"):
@@ -428,6 +472,7 @@ def set_parcels_period(parcel_ids: Optional[list], period: str, db=None) -> dict
 # ---------------------------------------------------------------------------
 
 def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = None,
+              project_name: Optional[str] = None,
               page: int = 1, page_size: int = 20) -> dict:
     """POI 分页列表，返回 {items, total, page, page_size, pages}。"""
     from ..schemas import paginated
@@ -439,7 +484,10 @@ def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = Non
                 continue
             if bbox and not _demo_geom_in_bbox(p["geometry"], bbox):
                 continue
+            if project_name and p.get("project_name") and p.get("project_name") != project_name:
+                continue
             result.append({"id": p["id"], "name": p["name"], "poi_type": p["poi_type"],
+                           "project_name": p.get("project_name"),
                            "locked": p.get("locked", False)})
         total = len(result)
         start = (page - 1) * page_size
@@ -448,6 +496,8 @@ def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = Non
     from ..models import Poi
     from geoalchemy2.functions import ST_Intersects, ST_MakeEnvelope
     query = db.query(Poi)
+    if project_name:
+        query = query.filter(Poi.project_name == project_name)
     if poi_type:
         query = query.filter(Poi.poi_type == poi_type)
     if bbox:
@@ -456,13 +506,19 @@ def list_pois(db=None, poi_type: Optional[str] = None, bbox: Optional[str] = Non
     total = query.count()
     rows = query.order_by(Poi.id).offset((page - 1) * page_size).limit(page_size).all()
     items = [{"id": r.id, "name": r.name, "poi_type": r.poi_type,
+              "project_name": r.project_name,
               "locked": r.locked} for r in rows]
     return paginated(items, page, page_size, total)
 
 
-def pois_geojson(db=None, bbox: Optional[str] = None) -> dict:
+def pois_geojson(db=None, bbox: Optional[str] = None,
+                 project_name: Optional[str] = None) -> dict:
     if is_demo():
         features = demo_data.poi_features()
+        if project_name:
+            features = [f for f in features
+                        if not f["properties"].get("project_name")
+                        or f["properties"].get("project_name") == project_name]
         if bbox:
             features = [f for f in features if _demo_geom_in_bbox(f["geometry"], bbox)]
         return {"type": "FeatureCollection", "features": features}
@@ -471,12 +527,15 @@ def pois_geojson(db=None, bbox: Optional[str] = None) -> dict:
     from geoalchemy2.functions import ST_Intersects, ST_MakeEnvelope
     from geoalchemy2.shape import to_shape
     query = db.query(Poi)
+    if project_name:
+        query = query.filter(Poi.project_name == project_name)
     if bbox:
         minx, miny, maxx, maxy = parse_bbox(bbox)
         query = query.filter(ST_Intersects(Poi.geom, ST_MakeEnvelope(minx, miny, maxx, maxy, 4326)))
     features = [
         {"type": "Feature", "geometry": mapping(to_shape(r.geom)),
          "properties": {"id": r.id, "name": r.name, "poi_type": r.poi_type,
+                        "project_name": r.project_name,
                         "locked": r.locked}}
         for r in query.all()
     ]
@@ -487,7 +546,7 @@ def create_poi(data: dict, db=None) -> dict:
     if is_demo():
         pid = demo_data.next_id(demo_data.POIS)
         new = {"id": pid, "name": data["name"], "poi_type": data["poi_type"],
-               "project_id": data.get("project_id"), "period": data.get("period"),
+               "project_name": data.get("project_name"), "period": data.get("period"),
                "locked": data.get("locked", False), "geometry": data["geometry"]}
         demo_data.POIS.append(new)
         return dict(new)
@@ -495,14 +554,14 @@ def create_poi(data: dict, db=None) -> dict:
     from geoalchemy2.functions import ST_GeomFromGeoJSON
     from ..models import Poi
     row = Poi(name=data["name"], poi_type=data["poi_type"],
-              project_id=data.get("project_id"), period=data.get("period"),
+              project_name=data.get("project_name"), period=data.get("period"),
               locked=data.get("locked", False),
               geom=ST_GeomFromGeoJSON(json.dumps(data["geometry"])))
     db.add(row)
     db.commit()
     db.refresh(row)
     return {"id": row.id, "name": row.name, "poi_type": row.poi_type,
-            "project_id": row.project_id, "locked": row.locked}
+            "project_name": row.project_name, "locked": row.locked}
 
 
 def set_poi_locked(poi_id: int, locked: bool, db=None) -> Optional[dict]:
@@ -601,13 +660,11 @@ def _fmt_date(d) -> str | None:
 def _parcel_summary(p: dict) -> dict:
     return {
         "id": p["id"], "parcel_code": p["parcel_code"], "name": p["name"],
-        "land_use": p["land_use"], "district": p.get("district"),
-        "region_code": p.get("region_code"),
+        "land_use": p["land_use"],
         # v4.0：期次缺省视为基期（与数据库列默认值一致）
-        "period": p.get("period") or "base", "project_id": p.get("project_id"),
+        "period": p.get("period") or "base", "project_name": p.get("project_name"),
         "locked": p.get("locked", False),
-        "area_sqm": p["area_sqm"], "far_limit": p["far_limit"],
-        "height_limit": p["height_limit"],
+        "area_sqm": p["area_sqm"],
         "created_at": p.get("created_at"),
     }
 
@@ -615,12 +672,9 @@ def _parcel_summary(p: dict) -> dict:
 def _parcel_summary_row(r) -> dict:
     return {
         "id": r.id, "parcel_code": r.parcel_code, "name": r.name,
-        "land_use": r.land_use, "district": r.district,
-        "region_code": r.region_code,
-        "period": r.period, "project_id": r.project_id, "locked": r.locked,
+        "land_use": r.land_use,
+        "period": r.period, "project_name": r.project_name, "locked": r.locked,
         "area_sqm": float(r.area_sqm) if r.area_sqm is not None else None,
-        "far_limit": float(r.far_limit) if r.far_limit is not None else None,
-        "height_limit": float(r.height_limit) if r.height_limit is not None else None,
         "created_at": _fmt_date(r.created_at),
     }
 

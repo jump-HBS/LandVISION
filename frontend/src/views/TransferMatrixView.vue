@@ -358,7 +358,11 @@ async function loadMapParcels(bbox) {
     mapHint.value = ''
     return
   }
-  const fc = await store.fetchParcelsGeojsonBbox(periods, bbox || lastBbox.value || DEFAULT_BBOX)
+  const fc = await store.fetchParcelsGeojsonBbox(
+    periods,
+    bbox || lastBbox.value || DEFAULT_BBOX,
+    ui.currentProject?.name || undefined,
+  )
   if (seq !== mapFetchSeq) return
   if (fc.skipped) {
     mapHint.value = fc.reason === 'area'

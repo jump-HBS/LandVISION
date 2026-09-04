@@ -11,21 +11,17 @@
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="面积">{{ fmtArea(parcel.area_sqm) }}</el-descriptions-item>
-        <el-descriptions-item label="行政区">{{ parcel.district || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="区划代码">{{ parcel.region_code || '-' }}</el-descriptions-item>
         <el-descriptions-item label="期次">
           <el-tag size="small" :type="parcel.period === 'current' ? 'warning' : 'success'">
             {{ parcel.period === 'current' ? '末期（current）' : '基期（base）' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="所属项目">{{ projectName || '未关联' }}</el-descriptions-item>
+        <el-descriptions-item label="所属项目">{{ parcel.project_name || projectName || '未关联' }}</el-descriptions-item>
         <el-descriptions-item label="锁定状态">
           <el-tag size="small" :type="parcel.locked ? 'danger' : 'info'">
             {{ parcel.locked ? '已锁定（不可删除）' : '未锁定' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="容积率上限">{{ parcel.far_limit ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="建筑限高">{{ parcel.height_limit ?? '-' }} m</el-descriptions-item>
       </el-descriptions>
 
       <!-- 三区三线体检结论（含判定依据） -->

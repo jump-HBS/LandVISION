@@ -81,14 +81,6 @@
               <template #default="{ row }">{{ (row.area_sqm / 10000).toFixed(2) }}</template>
             </el-table-column>
           </el-table>
-          <div class="section-title">行政区分布</div>
-          <el-table :data="report.district_distribution" size="small" border max-height="180">
-            <el-table-column prop="district" label="行政区" />
-            <el-table-column prop="count" label="地块数" align="right" width="70" />
-            <el-table-column label="面积(公顷)" align="right" width="100">
-              <template #default="{ row }">{{ (row.area_sqm / 10000).toFixed(2) }}</template>
-            </el-table-column>
-          </el-table>
           <div class="section-title">用地变化转移矩阵（模块一）</div>
           <template v-if="report.transition_analysis.has_data">
             <el-space wrap class="mb">
@@ -225,6 +217,9 @@ const conflictReasons = computed(() => {
 })
 
 onMounted(async () => {
+  if (ui.currentProject?.name) {
+    form.value.project_name = `${ui.currentProject.name}国土空间数据管理报告`
+  }
   try {
     const r = await getLatestReport()
     if (r && !r.detail) report.value = r

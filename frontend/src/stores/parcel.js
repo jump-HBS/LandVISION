@@ -81,7 +81,7 @@ export const useParcelStore = defineStore('parcel', {
      * 或数组 [minx, miny, maxx, maxy]；periods: ['base','current']。
      * 返回 FeatureCollection + {total, truncated, skipped, reason}。
      */
-    async fetchParcelsGeojsonBbox(periods, bbox) {
+    async fetchParcelsGeojsonBbox(periods, bbox, projectName) {
       const bboxStr = Array.isArray(bbox)
         ? `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`
         : bbox || null
@@ -123,7 +123,11 @@ export const useParcelStore = defineStore('parcel', {
       inflightController = new AbortController()
       try {
         const fcs = await Promise.all(periods.map((p) =>
-          getParcelsGeoJSON({ period: p, bbox: bboxStr }, { signal: inflightController.signal })))
+          getParcelsGeoJSON({
+            period: p,
+            bbox: bboxStr,
+            project_name: projectName || undefined,
+          }, { signal: inflightController.signal })))
         const features = fcs.flatMap((fc) => fc.features || [])
         const total = fcs.reduce((s, fc) => s + (fc.total || 0), 0)
         const truncated = fcs.some((fc) => fc.truncated)
@@ -144,11 +148,11 @@ export const useParcelStore = defineStore('parcel', {
         inflightController = null
       }
     },
-    async fetchPoisGeojson() {
-      this.poisGeojson = await getPoisGeoJSON()
+    async fetchPoisGeojson(params) {
+      this.poisGeojson = await getPoisGeoJSON(params)
     },
-    async fetchZonesGeojson() {
-      this.zonesGeojson = await getZonesGeoJSON()
+    async fetchZonesGeojson(params) {
+      this.zonesGeojson = await getZonesGeoJSON(params)
     },
     /** v4.0.3：删除/导入地块后清空视野缓存，强制下次加载走最新数据 */
     invalidateParcelsGeojsonCache() {
