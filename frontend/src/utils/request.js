@@ -9,7 +9,7 @@ import { ElMessage } from 'element-plus'
  */
 const request = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api',
-  timeout: 15000,
+  timeout: 60000,
 })
 
 // ---------- 请求拦截器：预留 Token 注入位 ----------
