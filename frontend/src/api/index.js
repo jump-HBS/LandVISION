@@ -8,6 +8,7 @@ import request from '../utils/request'
 export const getParcels = (params) => request.get('/parcels', { params })
 // v4.0.3：支持透传 config（AbortController signal 取消在途请求）
 export const getParcelsGeoJSON = (params, config) => request.get('/parcels/geojson', { params, ...config })
+export const getProjectParcelsGeoJSON = (params) => request.get('/parcels/project-geojson', { params, timeout: 120000 })
 export const getParcel = (id) => request.get(`/parcels/${id}`)
 export const createParcel = (data) => request.post('/parcels', data)
 export const updateParcel = (id, data) => request.put(`/parcels/${id}`, data)

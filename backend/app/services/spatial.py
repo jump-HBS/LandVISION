@@ -246,6 +246,72 @@ def parcels_mvt(z: int, x: int, y: int, db=None,
     return bytes(row[0]) if row and row[0] is not None else b""
 
 
+def parcels_project_geojson(db=None, project_name: Optional[str] = None,
+                            periods: Optional[str] = None,
+                            simplify_tolerance: float = 0.00001) -> dict:
+    """一次性返回项目全部地块 GeoJSON（可简化几何，供地图完整加载）。"""
+    if is_demo():
+        features = demo_data.parcel_features()
+        if project_name:
+            features = [f for f in features
+                        if not f["properties"].get("project_name")
+                        or f["properties"].get("project_name") == project_name]
+        if periods:
+            allowed = {p for p in periods.split(",") if p}
+            features = [f for f in features
+                        if (f["properties"].get("period") or "base") in allowed]
+        return {"type": "FeatureCollection", "features": features,
+                "total": len(features)}
+
+    sql = """
+        SELECT id,
+               parcel_code,
+               name,
+               land_use,
+               period,
+               locked,
+               COALESCE(area_sqm, 0)::float8 AS area_sqm,
+               ST_AsGeoJSON(
+                   ST_SimplifyPreserveTopology(geom, :tolerance),
+                   8,
+                   0
+               ) AS geometry_json
+        FROM parcels
+        WHERE (:project_name IS NULL OR project_name = :project_name)
+          AND (
+                COALESCE(:periods, '') = ''
+                OR period = ANY(string_to_array(:periods, ','))
+              )
+        ORDER BY id
+    """
+    rows = db.execute(
+        text(sql),
+        {
+            "project_name": project_name,
+            "periods": periods or "",
+            "tolerance": simplify_tolerance,
+        },
+    ).fetchall()
+    features = []
+    for row in rows:
+        features.append({
+            "type": "Feature",
+            "geometry": json.loads(row.geometry_json),
+            "properties": {
+                "id": row.id,
+                "parcel_code": row.parcel_code,
+                "name": row.name,
+                "land_use": row.land_use,
+                "period": row.period,
+                "locked": row.locked,
+                "area_sqm": row.area_sqm,
+                "project_name": project_name,
+            },
+        })
+    return {"type": "FeatureCollection", "features": features,
+            "total": len(features)}
+
+
 def get_parcel(parcel_id: int, db=None) -> Optional[dict]:
     """地块详情（含几何 GeoJSON）。"""
     if is_demo():

@@ -3,7 +3,7 @@
     <!-- 全屏地图（批量选择模式 + 保存绘制） -->
     <MapView
       ref="mapRef"
-      :parcels-tile-url="parcelsTileUrl"
+      :parcels="projectParcelsGeojson"
       :pois="store.poisGeojson"
       :zones="store.zonesGeojson"
       :region-boundary="boundaryGeojson"
@@ -373,7 +373,7 @@
  * POI 点要素点击查看属性与删除 / 地图绘制持久化（标注面板 map_features）/
  * 详情抽屉（期次/项目/判定依据/模块跳转）。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { useParcelStore } from '../stores/parcel'
@@ -383,6 +383,7 @@ import {
   batchDeletePois, batchDeleteZones,
   importParcelsShp, importPoisShp, getPois, deletePoi, lockPoi,
   checkParcel, getRegion,
+  getProjectParcelsGeoJSON,
   getMapFeatures, createMapFeature, deleteMapFeature, lockMapFeature,
 } from '../api'
 import { LAND_USE_COLORS, LAND_USE_ORDER, POI_COLORS } from '../utils/colors'
@@ -415,13 +416,7 @@ const form = ref({})
 const planningResult = ref(null)
 
 const projectName = computed(() => ui.currentProject?.name || '')
-const parcelsTileUrl = computed(() => {
-  if (!ui.currentProject?.name) return ''
-  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current').join(',')
-  if (!periods) return ''
-  const base = import.meta.env.VITE_API_BASE || '/api'
-  return `${base}/parcels/tiles/{z}/{x}/{y}?project_name=${encodeURIComponent(ui.currentProject.name)}&period=${periods}`
-})
+const projectParcelsGeojson = ref({ type: 'FeatureCollection', features: [] })
 
 // 批量选择（地图点击进入选中集）
 const batchMode = ref(false)
@@ -462,6 +457,7 @@ const poiImportResult = ref(null)
 onMounted(async () => {
   await Promise.all([
     loadPage(1),
+    loadProjectParcels(),
     store.fetchPoisGeojson(projectName.value || undefined),
     store.fetchZonesGeojson(projectName.value || undefined),
     loadMapFeatures(),
@@ -474,12 +470,41 @@ onMounted(async () => {
   }
 })
 
+watch(() => [ui.currentProjectId, showPeriods.value], async () => {
+  await Promise.all([
+    loadPage(1),
+    loadProjectParcels(),
+    store.fetchPoisGeojson(projectName.value || undefined),
+    store.fetchZonesGeojson(projectName.value || undefined),
+    loadMapFeatures(),
+    loadPois(),
+  ])
+}, { deep: true })
+
 function togglePanel(name) {
   panelOpen.value = panelOpen.value === name ? null : name
 }
 
+async function loadProjectParcels() {
+  if (!projectName.value) {
+    projectParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
+    return
+  }
+  const periods = showPeriods.value.filter((p) => p === 'base' || p === 'current').join(',')
+  if (!periods) {
+    projectParcelsGeojson.value = { type: 'FeatureCollection', features: [] }
+    return
+  }
+  projectParcelsGeojson.value = await getProjectParcelsGeoJSON({
+    project_name: projectName.value,
+    period: periods,
+    simplify_tolerance: 0.00001,
+  })
+}
+
 function onPeriodToggle() {
   loadPage(1)
+  loadProjectParcels()
 }
 
 /** 表格期次参数：只勾选单一期次时下推后端过滤；否则不过滤 */
@@ -743,6 +768,7 @@ async function onSelectionDelete(selection) {
     store.invalidateParcelsGeojsonCache()  // v4.0.3：清缓存，强制刷新删除后的最新数据
     await Promise.all([
       loadPage(1),
+      loadProjectParcels(),
       store.fetchPoisGeojson(projectName.value || undefined),
       store.fetchZonesGeojson(projectName.value || undefined),
       loadPois(),
@@ -848,7 +874,7 @@ async function doImport() {
     if (result.imported > 0) {
       ElMessage.success(`导入完成：成功 ${result.imported} 条（期次：${importOpts.value.period === 'base' ? '基期' : '末期'}）`)
       store.invalidateParcelsGeojsonCache()  // v4.0.3：导入后强制地图重新加载
-      await loadPage(1)
+      await Promise.all([loadPage(1), loadProjectParcels()])
     } else {
       const firstReason = result.skipped?.[0]?.reason || '未知原因'
       ElMessage.warning(`导入未成功（0 条入库）：${firstReason}，详见下方明细`)
@@ -862,7 +888,7 @@ async function doImport() {
 
 async function afterImportRefresh() {
   store.invalidateParcelsGeojsonCache()  // v4.0.3：导入新数据后强制地图重新加载
-  await loadPage(1)
+  await Promise.all([loadPage(1), loadProjectParcels()])
   ElMessage.success('列表与地图已刷新')
 }
 

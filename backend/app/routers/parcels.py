@@ -68,6 +68,22 @@ def parcels_tiles(
     )
 
 
+@router.get("/project-geojson", summary="一次加载项目全部地块 GeoJSON")
+def project_parcels_geojson(
+    project_name: Optional[str] = Query(None, description="按项目名称过滤"),
+    period: Optional[str] = Query(None, description="期次，多个用逗号分隔"),
+    simplify_tolerance: float = Query(0.00001, ge=0, le=0.01),
+    db=Depends(get_db),
+):
+    try:
+        return spatial.parcels_project_geojson(
+            db=db, project_name=project_name, periods=period,
+            simplify_tolerance=simplify_tolerance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.get("/{parcel_id}", summary="地块详情")
 def get_parcel(parcel_id: int, db=Depends(get_db)):
     data = spatial.get_parcel(parcel_id, db)
