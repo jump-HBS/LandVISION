@@ -398,8 +398,9 @@ function ensureLayer(key, geojson, tileUrl = '') {
         type: 'vector',
         tiles: [tileUrl],
         promoteId: 'id',
-        minzoom: 0,
-        maxzoom: 22,
+        minzoom: 3,
+        maxzoom: 16,
+        tileSize: 512,
       })
       addLayer('parcels', src)
     } else {
